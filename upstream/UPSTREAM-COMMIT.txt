@@ -1,0 +1,4 @@
+vpinball/vpinball 85914a8504689e65769148a2eb012d6022c74074
+VPinballX_BGFX 10.8.1 revision 6533 (VPinballX_BGFX64.exe 10.8.1.6533.85914a850)
+Files under upstream/ are unchanged copies.
+PinMAME headers: vpinball/pinmame 9dfcbd0f2539d96f8739f1c78250716135fa4b74 (PINMAME_SHA in platforms/config.sh at the VPX commit), copied as platforms/windows-x64/external.sh does.

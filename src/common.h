@@ -1,0 +1,111 @@
+// license:GPLv3+
+
+#pragma once
+
+#include <cassert>
+
+#include <string>
+using std::string;
+using namespace std::string_literals;
+using namespace std::string_view_literals;
+
+#include <vector>
+using std::vector;
+
+#include <sstream>
+
+#include <cstring>
+#include <cstdint>
+#include <cstdarg>
+#include <cstdlib>
+#include <memory> // needed for std::shared_ptr on Linux
+#include <functional>
+#include <filesystem>
+#include <format>
+
+// Shared logging
+#include "plugins/LoggingPlugin.h"
+
+// Scriptable API
+#include "plugins/ScriptablePlugin.h"
+
+// VPX main API
+#include "plugins/VPXPlugin.h"
+
+// Shared authored DMD overlay support (document model, editing sheet, renderer and the
+// Nixie option set): an identical copy lives in each overlay plugin's DMDOverlay folder
+#include "DMDOverlay/DMDOverlay.h"
+
+namespace B2S
+{
+
+LPI_USE_CPP();
+#define LOGD B2S::LPI_LOGD_CPP
+#define LOGI B2S::LPI_LOGI_CPP
+#define LOGW B2S::LPI_LOGW_CPP
+#define LOGE B2S::LPI_LOGE_CPP
+
+PSC_USE_ERROR();
+
+class vec4 final
+{
+public:
+   constexpr vec4() { }
+   constexpr vec4(float px, float py, float pz, float pw) : x(px), y(py), z(pz), w(pw) { }
+
+   float x = 0.f, y = 0.f, z = 0.f, w = 0.f;
+};
+
+class ivec4 final
+{
+public:
+   constexpr ivec4() { }
+   constexpr ivec4(int px, int py, int pz, int pw) : x(px), y(py), z(pz), w(pw) { }
+
+   int x = 0, y = 0, z = 0, w = 0;
+};
+
+// Rendering provided through plugin messages
+extern VPXTexture CreateTexture(uint8_t *rawData, int size);
+extern VPXTextureInfo* GetTextureInfo(VPXTexture texture);
+extern void DeleteTexture(VPXTexture texture);
+extern void UpdateTexture(VPXTexture *texture, int width, int height, VPXTextureFormat format, const void *image);
+
+// The following function are duplicates from the main VPX codebase
+constexpr inline char cLower(char c)
+{
+   if (c >= 'A' && c <= 'Z')
+      c ^= 32; //ASCII convention
+   return c;
+}
+
+string trim_string(const string& str);
+string string_to_lower(string str);
+std::filesystem::path find_case_insensitive_file_path(const std::filesystem::path &searchedFile);
+vector<uint8_t> base64_decode(const char * const __restrict value, const size_t size_bytes);
+int string_to_int(const string& str, int defaultValue);
+bool is_string_numeric(const string& str, int* const __restrict result);
+
+// RIFF/WAVE decoder for sounds embedded in .directb2s files.
+// Output payload is ready to be submitted as an AudioUpdateMsg buffer (mono/stereo, int16 or float32).
+struct WavData
+{
+   int channels = 0;
+   double sampleRate = 0.;
+   bool isFloat = false;
+   vector<uint8_t> pcm;
+};
+bool DecodeWav(const vector<uint8_t>& wav, WavData& out);
+
+// Parses a 'name=factor;name2=factor2' slowdown list (AnimationSlowDowns plugin setting), returns the factor for 'name' or 1
+int B2SAnimationSlowDown(const string& list, const string& name);
+
+// The authored overlay document is the shared DMDOverlay model: a user-authored <DMD> child
+// of the document's <Displays> node is a display rendered on top of the artwork of one of the
+// views (target 0 = backglass, 1 = score view), in artwork pixels with the origin at its top
+// left, spanning the whole image including the grill area (clipped away when the grill is
+// hidden). The glass image is embedded: glassImage holds the encoded content of the image
+// file, persisted as base64. The plugin binds the model hooks in B2SServer.cpp.
+using B2SDMDDisplay = DMDOverlay::Display;
+using B2SOverlayDoc = DMDOverlay::Doc;
+}
