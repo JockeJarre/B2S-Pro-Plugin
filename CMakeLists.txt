@@ -108,6 +108,12 @@ set_target_properties(B2SPlugin PROPERTIES
    OUTPUT_NAME "$<$<PLATFORM_ID:Windows>:plugin-b2spro64>$<$<NOT:$<PLATFORM_ID:Windows>>:plugin-b2spro>"
 )
 
+# CMake's default MODULE suffix on macOS is .so; plugin.cfg declares plugin-b2spro.dylib (and the
+# official VPX build sets the same), so name it like that
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+   set_target_properties(B2SPlugin PROPERTIES SUFFIX ".dylib")
+endif()
+
 # The optimizer flags of the official plugin build are MSVC spellings: apply them to MSVC only, so
 # that a Release build with gcc/clang on the other platforms works
 set(OPT_COMMON /Ob2 /O2 /Oi /fp:fast /fp:except- /Ot /GF /GS- /Gy /GR /Oy /GT /GL /w44005 /Zc:__cplusplus /std:c++20)
