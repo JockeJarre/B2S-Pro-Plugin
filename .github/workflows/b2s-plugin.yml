@@ -1,0 +1,121 @@
+# Builds the B2S Pro plugin standalone, cross-platform, and uploads the plugin folder
+# as a zip artifact per platform, with a .sha256 sidecar: extract it into the Visual
+# Pinball "plugins" folder,
+# so that you get plugins/b2spro/<library> plus plugin.cfg (see README install). The
+# library names follow plugin.cfg: plugin-b2spro64.dll on Windows (the flavor of the
+# official BGFX Windows application), plugin-b2spro.so / plugin-b2spro.dylib elsewhere.
+#
+# Ported from the b2s-plugin workflow of vpinball-b2s-test (b2s-pro branch).
+# Differences: this repository is standalone (the CMakeLists.txt at the root builds the
+# B2SPlugin target from src/ against the fetched copies under upstream/, which are not
+# hosted here: fetch-upstream.py downloads them, pinned by commit and SHA-256, and no
+# application is built), and every package is named with the commit, so
+# that 'test the latest' is never a guessing game (the settings version carries it too).
+name: b2s-plugin
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: "Build configuration"
+        required: false
+        default: Release
+        type: choice
+        options: [Release, Debug]
+  pull_request:
+    paths:
+      - src/**
+      - fetch-upstream.py
+      - CMakeLists.txt
+      - .github/workflows/b2s-plugin.yml
+  push:
+    branches: [main, ci]
+    paths:
+      - src/**
+      - fetch-upstream.py
+      - CMakeLists.txt
+      - .github/workflows/b2s-plugin.yml
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The library name and the artifact suffix per platform; the Windows x64 flavor is the
+          # one of the official application, the others follow plugin.cfg
+          - name: windows-x64
+            os: windows-latest
+            lib: plugin-b2spro64.dll
+          - name: linux-x64
+            os: ubuntu-latest
+            lib: plugin-b2spro.so
+          - name: macos-arm64
+            os: macos-latest
+            lib: plugin-b2spro.dylib
+    name: B2S Pro plugin ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    env:
+      # Single source of truth for the zip, artifact and upload path names (a mismatch between
+      # the zip written by 'Package the plugin' and the upload 'path' silently uploads nothing,
+      # since a missing path is only a warning)
+      PKG_NAME: b2s-pro-plugin-${{ matrix.name }}-${{ inputs.config || 'Release' }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Stamp the package name with the commit
+        run: echo "short_sha=${GITHUB_SHA:0:9}" >> "$GITHUB_ENV"
+      - uses: microsoft/setup-msbuild@v3
+        if: matrix.name == 'windows-x64'
+      - name: Fetch the upstream files the plugin builds against
+        # Not hosted in this repository: fetched from the official repositories, pinned by commit
+        # and SHA-256 (the CMakeLists fails with a hint when they are missing). Only the build
+        # files, the reference sources under plugins/b2s are not needed here
+        run: |
+          if [ "${{ matrix.name }}" = "windows-x64" ]; then python fetch-upstream.py; else python3 fetch-upstream.py; fi
+      - name: Build
+        # Everything the plugin needs (the official plugin API headers, tinyxml2, the PinMAME
+        # interface header) is in the fetched upstream/, the files listed in the manifest of
+        # fetch-upstream.py. The Windows build is
+        # MSVC's multi-config generator (the DLL under a per-config directory); the others are
+        # single-config, and the MSVC optimizer flags are guarded in the CMakeLists
+        run: |
+          if [ "${{ matrix.name }}" = "windows-x64" ]; then
+            cmake -A x64 -B build
+            cmake --build build --config "${{ inputs.config || 'Release' }}" --target B2SPlugin --parallel
+          else
+            cmake -DCMAKE_BUILD_TYPE=${{ inputs.config || 'Release' }} -B build
+            cmake --build build --target B2SPlugin --parallel
+          fi
+      - name: Package the plugin
+        run: |
+          mkdir -p staging/b2spro
+          # Stamp the plugin settings with the commit: it shows in the VPX plugin list UI, so a
+          # running install can be identified at a glance (base version from src/plugin.cfg)
+          base_version=$(sed -nE 's/^version = "([^"]*)".*/\1/p' src/plugin.cfg)
+          sed -E "s/^version = .*/version = \"${base_version}-${GITHUB_SHA:0:9}\"/" src/plugin.cfg > staging/b2spro/plugin.cfg
+          lib=$(find build -name '${{ matrix.lib }}' -print -quit)
+          test -n "$lib"
+          cp "$lib" staging/b2spro/
+          cd staging
+          if [ "${{ matrix.name }}" = "windows-x64" ]; then
+            7z a -tzip "../${PKG_NAME}-${short_sha}.zip" b2spro
+          else
+            zip -qr "../${PKG_NAME}-${short_sha}.zip" b2spro
+          fi
+          # Fail loudly instead of uploading nothing when the package is missing/empty
+          test -s "../${PKG_NAME}-${short_sha}.zip"
+          # The README tells users to check the download against a .sha256 file: ship it with the
+          # package (the checksum line names the plain zip, so 'sha256sum -c' works next to it)
+          cd ..
+          sha256sum "${PKG_NAME}-${short_sha}.zip" > "${PKG_NAME}-${short_sha}.zip.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.PKG_NAME }}-${{ env.short_sha }}
+          path: |
+            ${{ env.PKG_NAME }}-${{ env.short_sha }}.zip
+            ${{ env.PKG_NAME }}-${{ env.short_sha }}.zip.sha256
+          archive: false
+          if-no-files-found: error
