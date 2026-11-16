@@ -18,7 +18,7 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "B2S Pro"
             VALUE "FileDescription",  "B2S Pro backglass renderer plugin"
-            VALUE "FileVersion",      "1.0.0 (@B2S_BUILD_ID@)"
+            VALUE "FileVersion",      "1.0.0.@B2S_BUILD_REV@"
             VALUE "InternalName",     "plugin-b2spro"
             VALUE "LegalCopyright",   "https://github.com/KWildman69/B2S-Pro-Plugin"
             VALUE "OriginalFilename", "plugin-b2spro64.dll"

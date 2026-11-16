@@ -141,9 +141,6 @@ jobs:
           # package (the checksum line names the plain zip, so 'sha256sum -c' works next to it)
           cd ..
           sha256sum "${PKG_NAME}-${short_sha}.zip" > "${PKG_NAME}-${short_sha}.zip.sha256"
-      - name: Check the packaged dll properties
-        if: matrix.name == 'windows-x64'
-        run: powershell -Command "(Get-Item staging/b2spro/plugin-b2spro64.dll).VersionInfo | Format-List FileVersion,ProductVersion,FileDescription,CompanyName,PrivateBuild,SpecialBuild"
       - uses: actions/upload-artifact@v7
         # 'archive: false' takes a single file (v7 rejects several paths there), so the zip and
         # its .sha256 sidecar come as two artifacts
