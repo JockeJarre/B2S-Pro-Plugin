@@ -85,7 +85,10 @@ if(GIT_FOUND)
 endif()
 
 if(WIN32 AND MSVC)
-   # The Windows file properties (Explorer Details tab) of the library: name the file the build really is
+   # The Windows file properties (Explorer Details tab) of the library: name the file the build really is.
+   # CMake silently drops .rc sources when the RC language is not enabled (the official app build calls
+   # enable_language(RC) the same way): without this the version resource is missing from the DLL
+   enable_language(RC)
    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/version_info.rc.in" "${CMAKE_BINARY_DIR}/B2SPlugin_version_info.rc" @ONLY)
    list(APPEND B2S_PLUGIN_SOURCES "${CMAKE_BINARY_DIR}/B2SPlugin_version_info.rc")
 endif()
