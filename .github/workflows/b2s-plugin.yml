@@ -119,6 +119,11 @@ jobs:
             cmake -DCMAKE_BUILD_TYPE=${{ inputs.config || 'Release' }} -B build
             cmake --build build --target B2SPlugin --parallel
           fi
+      - name: Show the resource compile setup
+        if: matrix.name == 'windows-x64'
+        run: |
+          grep -B1 -A3 -i "resourcecompile\|version_info" build/B2SPlugin.vcxproj || echo "NO RC ITEM IN VCXPROJ"
+          find build -name "*.res" -print || true
       - name: Package the plugin
         run: |
           mkdir -p staging/b2spro
