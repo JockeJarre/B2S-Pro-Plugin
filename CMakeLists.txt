@@ -83,6 +83,9 @@ if(GIT_FOUND)
       set(B2S_BUILD_ID "${B2S_GIT_SHA} (${B2S_BUILD_TIME})")
    endif()
 endif()
+# One configure line per build (the id is stamped in the DLL properties, the load log and the
+# package name: when they show the fallback, this says which part of the detection failed)
+message(STATUS "B2S build id: '${B2S_BUILD_ID}' (git: '${GIT_EXECUTABLE}', found: ${GIT_FOUND}, rev: '${B2S_GIT_SHA}')")
 
 if(WIN32 AND MSVC)
    # The Windows file properties (Explorer Details tab) of the library: name the file the build really is.
