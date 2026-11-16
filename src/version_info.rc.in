@@ -23,7 +23,7 @@ BEGIN
             VALUE "LegalCopyright",   "https://github.com/KWildman69/B2S-Pro-Plugin"
             VALUE "OriginalFilename", "plugin-b2spro64.dll"
             VALUE "ProductName",      "B2S Pro"
-            VALUE "ProductVersion",   "1.0.0"
+            VALUE "ProductVersion",   "1.0.0.@B2S_BUILD_REV@"
             VALUE "PrivateBuild",     "@B2S_BUILD_ID@"
             VALUE "SpecialBuild",     "@B2S_BUILD_ID@"
         END
