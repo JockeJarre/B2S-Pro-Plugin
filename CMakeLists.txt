@@ -75,10 +75,12 @@ set(B2S_PLUGIN_SOURCES
 # on disk, and shipping 'the latest' blindly made us retest an already fixed build too many times: log it at load,
 # stamp the binary's file properties with it and stamp the CI package name with it
 find_package(Git QUIET)
+set(B2S_BUILD_REV "local")
 set(B2S_BUILD_ID "local (no git)")
 if(GIT_FOUND)
    execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --short=9 HEAD OUTPUT_VARIABLE B2S_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
    if(B2S_GIT_SHA)
+      set(B2S_BUILD_REV "${B2S_GIT_SHA}")
       string(TIMESTAMP B2S_BUILD_TIME "%Y-%m-%d %H:%M UTC" UTC)
       set(B2S_BUILD_ID "${B2S_GIT_SHA} (${B2S_BUILD_TIME})")
    endif()
@@ -98,7 +100,11 @@ endif()
 
 add_library(B2SPlugin MODULE ${B2S_PLUGIN_SOURCES})
 
-target_compile_definitions(B2SPlugin PRIVATE B2SPLUGIN_BUILD_ID="${B2S_BUILD_ID}")
+# The stamp the load log prints: the git rev only. The full id (rev + configure time) goes to the
+# version resource, which is recompiled every build; the compile definition must not carry the
+# time, it applies to every source file and MSBuild caches per file by command line: a stamp that
+# changes at every configure invalidates the whole cached build tree of the CI on every run
+target_compile_definitions(B2SPlugin PRIVATE B2SPLUGIN_BUILD_ID="${B2S_BUILD_REV}")
 
 target_include_directories(B2SPlugin PUBLIC
    ${UP}/third-party/include
