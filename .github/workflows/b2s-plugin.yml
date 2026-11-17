@@ -28,7 +28,7 @@ on:
       - CMakeLists.txt
       - .github/workflows/b2s-plugin.yml
   push:
-    branches: [main, ci]
+    branches: [main, ci, 'port-b2s-*', KeepAspectRatio]
     paths:
       - src/**
       - fetch-upstream.py
