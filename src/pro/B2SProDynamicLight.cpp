@@ -398,7 +398,7 @@ const B2SProDynamicLighting::Rgba* B2SProDynamicLighting::GetImage(const B2SBulb
    return it->second.w > 0 ? &it->second : nullptr;
 }
 
-void B2SProDynamicLighting::DrawLight(VPXRenderContext2D* ctx, const B2SBulb& light, const vector<std::unique_ptr<B2SBulb>>& candidates, B2SDualMode dualMode, float alpha)
+void B2SProDynamicLighting::DrawLight(VPXRenderContext2D* ctx, const B2SBulb& light, const vector<std::unique_ptr<B2SBulb>>& candidates, B2SDualMode dualMode, float alpha, const float offsetX, const float offsetY)
 {
    const B2SProBulbData& lp = *light.m_pro;
    const int lx = light.m_locationX, ly = light.m_locationY, lw = light.m_width, lh = light.m_height;
@@ -483,7 +483,7 @@ void B2SProDynamicLighting::DrawLight(VPXRenderContext2D* ctx, const B2SBulb& li
          lit.valid = true;
       }
       if (lit.tex != nullptr)
-         ctx->DrawImage(ctx, lit.tex, 1.f, 1.f, 1.f, alpha, 0.f, 0.f, static_cast<float>(ow), static_cast<float>(oh), 0.f, 0.f, 0.f, static_cast<float>(ox), static_cast<float>(oy),
+         ctx->DrawImage(ctx, lit.tex, 1.f, 1.f, 1.f, alpha, 0.f, 0.f, static_cast<float>(ow), static_cast<float>(oh), 0.f, 0.f, 0.f, static_cast<float>(ox) + offsetX, static_cast<float>(oy) + offsetY,
             static_cast<float>(ow), static_cast<float>(oh));
    }
 }

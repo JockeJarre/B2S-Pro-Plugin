@@ -22,7 +22,24 @@ static inline float InvsRGB(const float x) { return (x <= 0.04045f) ? (x * (floa
 
 MSGPI_BOOL_VAL_SETTING(showGrillProp, "ShowGrill", "Show Grill", "Show Grill", true, false);
 MSGPI_BOOL_VAL_SETTING(upgradedSegRenderingProp, "UpgradedSegmentRendering", "Upgraded segment rendering",
-   "Render LED score displays with the upgraded segment renderer (turn off for the original B2S segment rendering)", true, false); // B2S Pro: default off, matching the B2S Server look
+   "Render LED score displays with the upgraded segment renderer (turn off for the original B2S segment rendering)", true, false);
+
+// The backglass and score view images keep their shape in their window: the drawing surface is padded to
+// the window shape, the images are scaled by a uniform factor and the leftover area is kept black. The
+// setting is a percentage of this fit: 0 stretches the images over the whole window (plain B2S, no black
+// area), 100 keeps the aspect ratio fully, in between the black area and the leftover distortion are
+// applied that part of the way
+MSGPI_INT_VAL_SETTING(keepAspectRatioProp, "KeepAspectRatioPercent", "Keep aspect ratio (%)",
+   "Fit the backglass and score view images in their window at their authored aspect ratio, leaving the "
+   "leftover area black: 100 keeps the aspect ratio fully (the image is never distorted, the black area is "
+   "at its widest), 0 turns it off and stretches the images over the whole window, in between the padding "
+   "and the leftover distortion are applied that part of the way (50: half the black area, half the "
+   "distortion)", true, 0, 100, 0);
+
+// The black area of the fit goes top and bottom (centered) or all on top (content on the floor)
+MSGPI_BOOL_VAL_SETTING(centerVerticallyProp, "CenterVertically", "Center vertically",
+   "Center the images vertically in the black area left by 'Keep aspect ratio' (turn off to put them on the "
+   "floor). At 0 the black area is empty, at 50 its half width goes above the image", true, false); // B2S Pro: default off, matching the B2S Server look
 
 static const char* dualModeValues[] = { "Authentic", "Fantasy" };
 MSGPI_ENUM_VAL_SETTING(dualModeProp, "DualMode", "Dual Mode", "Active mode for dual backglasses (authentic or fantasy)", true, 1, 2, dualModeValues, 1);
@@ -121,6 +138,8 @@ void B2SRenderer::RegisterSettings(const MsgPluginAPI* const msgApi, unsigned in
    msgApi->RegisterSetting(endpointId, &showGrillProp);
    msgApi->RegisterSetting(endpointId, &dualModeProp);
    msgApi->RegisterSetting(endpointId, &upgradedSegRenderingProp);
+   msgApi->RegisterSetting(endpointId, &keepAspectRatioProp);
+   msgApi->RegisterSetting(endpointId, &centerVerticallyProp);
 }
 
 namespace
@@ -131,6 +150,10 @@ namespace
    void MSGPIAPI DualModeSet(void*, int v) { dualModeProp_Set(v); }
    int MSGPIAPI UpgradedSegGet(void*) { return upgradedSegRenderingProp_Get(); }
    void MSGPIAPI UpgradedSegSet(void*, int v) { upgradedSegRenderingProp_Set(v); }
+   int MSGPIAPI KeepAspectRatioGet(void*) { return keepAspectRatioProp_Get(); }
+   void MSGPIAPI KeepAspectRatioSet(void*, int v) { keepAspectRatioProp_Set(v); }
+   int MSGPIAPI CenterVerticallyGet(void*) { return centerVerticallyProp_Get(); }
+   void MSGPIAPI CenterVerticallySet(void*, int v) { centerVerticallyProp_Set(v); }
 }
 
 int B2SRenderer::FillSettingsItems(PagedUIItemDef* items)
@@ -156,7 +179,102 @@ int B2SRenderer::FillSettingsItems(PagedUIItemDef* items)
    items[2].tooltip = "Render LED score displays with the upgraded segment renderer (turn off for the original B2S segment rendering)";
    items[2].storage = PAGEDUI_STORAGE_HOST;
    items[2].boolProp = { 1, &UpgradedSegGet, &UpgradedSegSet };
-   return 3;
+   items[3] = {};
+   items[3].type = PAGEDUI_ITEM_INT;
+   items[3].id = "KeepAspectRatioPercent";
+   items[3].label = "Keep aspect ratio";
+   items[3].tooltip = "Fit the backglass and score view images in their window at their authored aspect ratio, leaving the "
+      "leftover area black: 100 keeps the aspect ratio fully (the image is never distorted, the black area is at its widest), "
+      "0 turns it off and stretches the images over the whole window, in between the black area and the leftover distortion "
+      "are applied that part of the way (50: half the black area, half the distortion)";
+   items[3].storage = PAGEDUI_STORAGE_HOST;
+   items[3].intProp = { 0, 100, 0, "%d %%", &KeepAspectRatioGet, &KeepAspectRatioSet };
+   items[4] = {};
+   items[4].type = PAGEDUI_ITEM_BOOL;
+   items[4].id = "CenterVertically";
+   items[4].label = "Center vertically";
+   items[4].tooltip = "Center the images vertically in the black area left by 'Keep aspect ratio' (turn off to put them on the floor). At 0 the black area is empty, at 50 its half width goes above the image";
+   items[4].storage = PAGEDUI_STORAGE_HOST;
+   items[4].boolProp = { 1, &CenterVerticallyGet, &CenterVerticallySet };
+   return 5;
+}
+
+// KeepAspectRatio rendering: the host stretches the source surface (the fictitious screen the plugin draws
+// on) over the whole window, each axis on its own. The surface is therefore padded to the window shape, so
+// that both axes scale by the very same factor: the authored content keeps its shape (a round bulb stays
+// round, the image is not stretched) and the padding stays black. Nothing else has to be known by the
+// drawing code, it keeps working in the image authored units.
+//
+// The setting is a percentage of this fit: the padding the full fit needs is applied that part of the way,
+// which takes both axes scale factors from the window/image ratio to 1 and the black area from nothing to
+// its full width, the two ends met at 0 (plain stretch) and 100 (aspect ratio fully kept).
+void B2SRenderer::FitSurfaceToWindow(VPXRenderContext2D* ctx, const float contentW, const float contentH)
+{
+   m_padW = m_padH = 0.f;
+   const int keep = keepAspectRatioProp_Get();
+   if (keep <= 0 || contentW <= 0.f || contentH <= 0.f || ctx->outWidth <= 0.f || ctx->outHeight <= 0.f)
+   {
+      ctx->srcWidth = contentW;
+      ctx->srcHeight = contentH;
+      m_contentW = contentW;
+      m_contentH = contentH;
+      m_layoutOY = 0.f;
+      m_layoutOX = 0.f;
+      return;
+   }
+
+   const float wndAspect = ctx->outWidth / ctx->outHeight;
+   const bool wideContent = (contentW / contentH > wndAspect);
+   const float fitW = wideContent ? contentW : contentH * wndAspect;
+   const float fitH = wideContent ? contentW / wndAspect : contentH;
+   const float part = (keep >= 100) ? 1.f : (0.01f * static_cast<float>(keep));
+   ctx->srcWidth = m_padW = contentW + part * (fitW - contentW);
+   ctx->srcHeight = m_padH = contentH + part * (fitH - contentH);
+   m_contentW = contentW;
+   m_contentH = contentH;
+   // Vertical placement of the content in the surface: centered, or stuck on the floor. The content is drawn
+   // from the top of the surface, so the placement is the black area taken above it
+   m_layoutOY = centerVerticallyProp_Get() ? 0.5f * (m_padH - contentH) : m_padH - contentH;
+   // Horizontal placement is centered, there is nothing to choose: the image is centered on its axis of
+   // authoring, the only case where a horizontal black area shows is a window wider than the image
+   m_layoutOX = 0.5f * (m_padW - contentW);
+}
+
+// The padding is painted over once the frame is drawn: animations, illuminations and score displays are
+// authored on the image and may spill in the area kept for the borders, which stays black
+void B2SRenderer::RenderAspectPadding(VPXRenderContext2D* ctx)
+{
+   const float left = m_layoutOX;
+   const float top = m_layoutOY;
+   const float bottom = m_padH - m_layoutOY - m_contentH;
+   const float right = m_padW - m_layoutOX - m_contentW;
+   if (left <= 0.f && right <= 0.f && top <= 0.f && bottom <= 0.f)
+      return;
+
+   if (m_blackTexture == nullptr)
+   {
+      static const uint8_t black[4] = { 0, 0, 0, 255 };
+      m_vpxApi->UpdateTexture(&m_blackTexture, 1, 1, VPXTextureFormat::VPXTEXFMT_sRGBA8, black);
+      if (m_blackTexture == nullptr)
+         return; // Texture upload failed, keep the padding as it is
+   }
+
+   const auto drawBar = [this, ctx](const float x, const float y, const float w, const float h)
+   {
+      ctx->DrawImage(ctx, m_blackTexture, 0.f, 0.f, 0.f, 1.f, // Opaque black
+         0.f, 0.f, 1.f, 1.f, // The 1x1 texture, fully sampled
+         0.f, 0.f, 0.f, // No pivot, no rotation
+         x, y, w, h);
+   };
+
+   if (top > 0.f)
+      drawBar(0.f, 0.f, ctx->srcWidth, top);
+   if (bottom > 0.f)
+      drawBar(0.f, m_layoutOY + m_contentH, ctx->srcWidth, bottom);
+   if (left > 0.f)
+      drawBar(0.f, m_layoutOY, left, m_contentH);
+   if (right > 0.f)
+      drawBar(m_layoutOX + m_contentW, m_layoutOY, right, m_contentH);
 }
 
 void B2SRenderer::OnStateSrcChanged(const std::vector<StateSrcId>& items)
@@ -527,7 +645,7 @@ void B2SRenderer::DrawProBulb(VPXRenderContext2D* ctx, const B2SBulb& bulb)
          const ProRect r = B2SProMotionSystem::SourceRect(bulb);
          const VPXTextureInfo* const tex = GetTextureInfo(source);
          ctx->DrawImage(ctx, source, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, static_cast<float>(tex->width), static_cast<float>(tex->height), static_cast<float>(tex->width) * 0.5f,
-            static_cast<float>(tex->height) * 0.5f, B2SProMotionSystem::SourceRollAngle(bulb), r.x, r.y, r.w, r.h);
+            static_cast<float>(tex->height) * 0.5f, B2SProMotionSystem::SourceRollAngle(bulb), ContentX(r.x), ContentY(r.y), r.w, r.h);
       }
    }
    if (bulb.m_brightness <= 0.f)
@@ -536,7 +654,7 @@ void B2SRenderer::DrawProBulb(VPXRenderContext2D* ctx, const B2SBulb& bulb)
    {
       if (pro.separateLightLayer && bulb.m_image)
          DrawProImage(ctx, bulb, bulb.m_image);
-      m_proLighting.DrawLight(ctx, bulb, m_b2s->m_backglassIlluminations, ActiveDualMode(), bulb.m_brightness);
+      m_proLighting.DrawLight(ctx, bulb, m_b2s->m_backglassIlluminations, ActiveDualMode(), bulb.m_brightness, m_layoutOX, m_layoutOY);
       return;
    }
    VPXTexture texture = pro.rt.motion.image ? pro.rt.motion.image : bulb.m_image;
@@ -591,8 +709,8 @@ bool B2SRenderer::DrawProMaskedBall(VPXRenderContext2D* ctx, const B2SBulb& bulb
          pa = static_cast<uint8_t>((pa * alpha + 127) / 255);
       }
    UpdateTexture(&mask.frame, fw, fh, VPXTEXFMT_sRGBA8, frame.data());
-   ctx->DrawImage(ctx, mask.frame, 1.f, 1.f, 1.f, bulb.m_brightness, 0.f, 0.f, static_cast<float>(fw), static_cast<float>(fh), 0.f, 0.f, 0.f, static_cast<float>(left),
-      static_cast<float>(top), static_cast<float>(fw), static_cast<float>(fh));
+   ctx->DrawImage(ctx, mask.frame, 1.f, 1.f, 1.f, bulb.m_brightness, 0.f, 0.f, static_cast<float>(fw), static_cast<float>(fh), 0.f, 0.f, 0.f, ContentX(static_cast<float>(left)),
+      ContentY(static_cast<float>(top)), static_cast<float>(fw), static_cast<float>(fh));
    return true;
 }
 
@@ -618,7 +736,7 @@ void B2SRenderer::DrawProImage(VPXRenderContext2D* ctx, const B2SBulb& bulb, VPX
       h = m.h;
    }
    ctx->DrawImage(ctx, texture, 1.f, 1.f, 1.f, bulb.m_brightness, 0.f, 0.f, static_cast<float>(tex->width), static_cast<float>(tex->height), static_cast<float>(tex->width) * pivotU,
-      static_cast<float>(tex->height) * pivotV, bulb.m_drawRotation, x, y, w, h);
+      static_cast<float>(tex->height) * pivotV, bulb.m_drawRotation, ContentX(x), ContentY(y), w, h);
 }
 
 void B2SRenderer::DrawBulbImage(VPXRenderContext2D* ctx, const B2SBulb& bulbRef)
@@ -638,7 +756,7 @@ void B2SRenderer::DrawBulbImage(VPXRenderContext2D* ctx, const B2SBulb& bulbRef)
          ctx->DrawImage(ctx, bulb->m_offImage, bulb->m_lightColor.x, bulb->m_lightColor.y, bulb->m_lightColor.z, 1.f,
             0.f, 0.f, static_cast<float>(bulbTex->width), static_cast<float>(bulbTex->height),
             static_cast<float>(bulbTex->width) * pivotU, static_cast<float>(bulbTex->height) * pivotV, rotation,
-            static_cast<float>(bulb->m_locationX), static_cast<float>(bulb->m_locationY), static_cast<float>(bulb->m_width), static_cast<float>(bulb->m_height));
+            ContentX(static_cast<float>(bulb->m_locationX)), ContentY(static_cast<float>(bulb->m_locationY)), static_cast<float>(bulb->m_width), static_cast<float>(bulb->m_height));
       }
       if (bulb->m_image)
       {
@@ -646,7 +764,7 @@ void B2SRenderer::DrawBulbImage(VPXRenderContext2D* ctx, const B2SBulb& bulbRef)
          ctx->DrawImage(ctx, bulb->m_image, bulb->m_lightColor.x, bulb->m_lightColor.y, bulb->m_lightColor.z, bulb->m_brightness,
             0.f, 0.f, static_cast<float>(bulbTex->width), static_cast<float>(bulbTex->height),
             static_cast<float>(bulbTex->width) * pivotU, static_cast<float>(bulbTex->height) * pivotV, rotation,
-            static_cast<float>(bulb->m_locationX), static_cast<float>(bulb->m_locationY), static_cast<float>(bulb->m_width), static_cast<float>(bulb->m_height));
+            ContentX(static_cast<float>(bulb->m_locationX)), ContentY(static_cast<float>(bulb->m_locationY)), static_cast<float>(bulb->m_width), static_cast<float>(bulb->m_height));
       }
    }
 }
@@ -921,7 +1039,7 @@ void B2SRenderer::RenderScores(VPXRenderContext2D* ctx, B2SServer* server, const
                      ctx->DrawImage(ctx, img, 1.f, 1.f, 1.f, 1.f, //
                         0.f, 0.f, static_cast<float>(texInfo->width), static_cast<float>(texInfo->height), //
                         0.f, 0.f, 0.f, // No rotation
-                        x, static_cast<float>(reel.m_locY), width, static_cast<float>(reel.m_height));
+                        ContentX(x), ContentY(static_cast<float>(reel.m_locY)), width, static_cast<float>(reel.m_height));
                   }
                }
             }
@@ -981,7 +1099,7 @@ void B2SRenderer::RenderScores(VPXRenderContext2D* ctx, B2SServer* server, const
                litColor.x, litColor.y, litColor.z, 1.f, 1.f, // Emitter tint, emitter brightness, emitter alpha
                0.f, 0.f, 0.f, 0.f, // Emitter padding (from glass border)
                // Render quad
-               x, ctx->srcHeight - static_cast<float>(reel.m_locY + reel.m_height), width, static_cast<float>(reel.m_height));
+               ContentX(x), ctx->srcHeight - m_layoutOY - static_cast<float>(reel.m_locY + reel.m_height), width, static_cast<float>(reel.m_height));
          }
             break;
          }
@@ -1190,15 +1308,21 @@ void B2SRenderer::RenderLegacyScoreDisplay(VPXRenderContext2D* ctx, B2SServer* s
          }
          if (state.warped[k] != nullptr)
             ctx->DrawImage(ctx, state.warped[k], 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, static_cast<float>(state.warpW[k]), static_cast<float>(state.warpH[k]), 0.f, 0.f, 0.f,
-               static_cast<float>(state.warpX[k]), static_cast<float>(state.warpY[k]), static_cast<float>(state.warpW[k]), static_cast<float>(state.warpH[k]));
+               ContentX(static_cast<float>(state.warpX[k])), ContentY(static_cast<float>(state.warpY[k])), static_cast<float>(state.warpW[k]), static_cast<float>(state.warpH[k]));
       }
       return;
    }
    if (dream7)
+   {
+      state.display->SetViewOffset(m_layoutOX, m_layoutOY); // Placed with the KeepAspectRatio placement
       state.display->Render(ctx);
+   }
    else
       for (auto& box : state.boxes)
+      {
+         box->SetViewOffset(m_layoutOX, m_layoutOY);
          box->Render(ctx);
+      }
 }
 
 ProScoreTransform B2SRenderer::ProTransformOf(const B2SScore& score)
@@ -1332,9 +1456,9 @@ void B2SRenderer::DrawProReelDigit(VPXRenderContext2D* ctx, const B2SScore& reel
    if (cache.tex == nullptr)
       return;
    if (reel.m_hasTransform)
-      ctx->DrawImage(ctx, cache.tex, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, cache.w, cache.h, 0.f, 0.f, 0.f, cache.x, cache.y, cache.w, cache.h);
+      ctx->DrawImage(ctx, cache.tex, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, cache.w, cache.h, 0.f, 0.f, 0.f, ContentX(cache.x), ContentY(cache.y), cache.w, cache.h);
    else
-      ctx->DrawImage(ctx, cache.tex, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, cache.w, cache.h, 0.f, 0.f, 0.f, x, static_cast<float>(reel.m_locY), width, static_cast<float>(reel.m_height));
+      ctx->DrawImage(ctx, cache.tex, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, cache.w, cache.h, 0.f, 0.f, 0.f, ContentX(x), ContentY(static_cast<float>(reel.m_locY)), width, static_cast<float>(reel.m_height));
 }
 
 // B2S Pro: formBackglass ReelGapOverlay. The strip between digits i and i + 1 draws the columns of the
@@ -1435,8 +1559,8 @@ bool B2SRenderer::RenderBackglass(VPXRenderContext2D* ctx, B2SServer* server)
    m_b2sWidth = bgTexInfo ? static_cast<float>(bgTexInfo->width) : 1024.f;
    m_b2sHeight = (bgTexInfo ? static_cast<float>(bgTexInfo->height) : 768.f) - m_grillCut;
 
-   ctx->srcWidth = m_b2sWidth;
-   ctx->srcHeight = m_b2sHeight;
+   // KeepAspectRatio: the source surface is padded to the window shape, the content keeps its shape on it
+   FitSurfaceToWindow(ctx, m_b2sWidth, m_b2sHeight);
 
    // Update animations
    auto now = std::chrono::steady_clock::now();
@@ -1476,7 +1600,7 @@ bool B2SRenderer::RenderBackglass(VPXRenderContext2D* ctx, B2SServer* server)
             const VPXTextureInfo* texInfo = GetTextureInfo(darkImage.m_image);
             ctx->DrawImage(ctx, darkImage.m_image, 1.f, 1.f, 1.f, 1.f, 0.f, m_grillCut, static_cast<float>(texInfo->width), static_cast<float>(texInfo->height) - m_grillCut, 0.f, 0.f,
                0.f, // No rotation
-               0.f, 0.f, static_cast<float>(texInfo->width), static_cast<float>(texInfo->height) - m_grillCut);
+               ContentX(0.f), ContentY(0.f), static_cast<float>(texInfo->width), static_cast<float>(texInfo->height) - m_grillCut);
          }
       }
       if (onImage.m_image)
@@ -1484,7 +1608,7 @@ bool B2SRenderer::RenderBackglass(VPXRenderContext2D* ctx, B2SServer* server)
          const VPXTextureInfo* texInfo = GetTextureInfo(onImage.m_image);
          ctx->DrawImage(ctx, onImage.m_image, 1.f, 1.f, 1.f, onImage.m_brightness, 0.f, m_grillCut, static_cast<float>(texInfo->width), static_cast<float>(texInfo->height) - m_grillCut, 0.f,
             0.f, 0.f, // No rotation
-            0.f, 0.f, static_cast<float>(texInfo->width), static_cast<float>(texInfo->height) - m_grillCut);
+            ContentX(0.f), ContentY(0.f), static_cast<float>(texInfo->width), static_cast<float>(texInfo->height) - m_grillCut);
       }
    };
 
@@ -1509,6 +1633,8 @@ bool B2SRenderer::RenderBackglass(VPXRenderContext2D* ctx, B2SServer* server)
                                                                 : m_b2s->m_backglassOnImage.m_image;
    RenderDisplays(ctx, server, 0, backImage);
 
+   RenderAspectPadding(ctx);
+
    return true;
 }
 
@@ -1518,8 +1644,8 @@ bool B2SRenderer::RenderScoreView(VPXRenderContext2D* ctx, B2SServer* server)
       return false;
 
    // Update to latest settings state
-   ctx->srcWidth = m_dmdWidth;
-   ctx->srcHeight = m_dmdHeight;
+   // KeepAspectRatio: the source surface is padded to the window shape, the content keeps its shape on it
+   FitSurfaceToWindow(ctx, m_dmdWidth, m_dmdHeight);
 
    // Update animations
    auto now = std::chrono::steady_clock::now();
@@ -1534,7 +1660,7 @@ bool B2SRenderer::RenderScoreView(VPXRenderContext2D* ctx, B2SServer* server)
          ctx->DrawImage(ctx, m_b2s->m_dmdImage.m_image, 1.f, 1.f, 1.f, 1.f,
             0.f, 0.f, m_dmdWidth, m_dmdHeight,
             0.f, 0.f, 0.f, // No rotation
-            0.f, 0.f, m_dmdWidth, m_dmdHeight);
+            ContentX(0.f), ContentY(0.f), m_dmdWidth, m_dmdHeight);
    };
 
    m_drawingBackglass = false;
@@ -1554,6 +1680,8 @@ bool B2SRenderer::RenderScoreView(VPXRenderContext2D* ctx, B2SServer* server)
       RenderScores(ctx, server, m_b2s->m_dmdScores, elapsed);
    }
    RenderDisplays(ctx, server, 1, m_b2s->m_dmdImage.m_image);
+
+   RenderAspectPadding(ctx);
 
    return true;
 }
@@ -1676,6 +1804,7 @@ void B2SRenderer::RenderDisplays(VPXRenderContext2D* ctx, B2SServer* server, int
          continue;
       while (i >= m_dmdOverlays.size())
          m_dmdOverlays.emplace_back(std::make_unique<DMDOverlay::Renderer>(m_vpxApi, m_resURIResolver));
+      m_dmdOverlays[i]->SetViewOffset(m_layoutOX, m_layoutOY); // Placed with the KeepAspectRatio placement
       m_dmdOverlays[i]->Render(ctx, displays[i], backImage);
    }
 }

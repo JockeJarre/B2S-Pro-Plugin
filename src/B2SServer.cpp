@@ -76,7 +76,7 @@ namespace
       info->info = nullptr;
    }
 
-   unsigned int MSGPIAPI SettingsItemCount(void*, const char*) { return 8; }
+   unsigned int MSGPIAPI SettingsItemCount(void*, const char*) { return 10; }
 
    void MSGPIAPI SettingsGetItems(void*, const char*, PagedUIItemDef* items)
    {

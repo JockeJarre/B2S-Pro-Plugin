@@ -23,7 +23,7 @@ void Dream7Display::Render(VPXRenderContext2D* const ctx)
    {
       Rasterize();
       if (m_pGraphics)
-         m_pGraphics->DrawToContext(ctx, GetLeft(), GetTop());
+         m_pGraphics->DrawToContext(ctx, GetLeft(), GetTop(), m_viewOX, m_viewOY);
    }
 }
 

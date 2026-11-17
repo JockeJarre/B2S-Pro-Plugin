@@ -88,10 +88,15 @@ void Renderer::Render(VPXRenderContext2D* ctx, Display& display, VPXTexture artw
    }
 
    // Map the authored bounds (document space, origin at the top left) to the render quad
-   // (bottom-up render space of the view) through the plugin hook; the default maps the
-   // bounds against the whole view, flipping the origin
+   // (bottom-up render space of the view) through the plugin hook; the default maps the bounds
+   // against the whole view, flipping the origin. The KeepAspectRatio placement is a top-down offset
+   // on the padded surface: horizontally it carries over as is, the vertical flip turns it into a
+   // subtraction (the authored content top edge is m_viewOY *below* the padded surface top, so its
+   // bottom-up Y sits m_viewOY *lower*)
+   const int viewOX = static_cast<int>(std::lround(m_viewOX));
+   const int viewOY = static_cast<int>(std::lround(m_viewOY));
    const vec4<int> frame
-      = doc != nullptr && doc->mapQuad != nullptr ? doc->mapQuad(ctx, display) : vec4<int>(display.x, static_cast<int>(ctx->srcHeight) - display.y - display.h, display.w, display.h);
+      = doc != nullptr && doc->mapQuad != nullptr ? doc->mapQuad(ctx, display) : vec4<int>(display.x + viewOX, static_cast<int>(ctx->srcHeight) - display.y - display.h - viewOY, display.w, display.h);
    if (frame.z == 0 || frame.w == 0)
       return;
    if (frame.y + frame.w <= 0 || frame.y >= static_cast<int>(ctx->srcHeight))

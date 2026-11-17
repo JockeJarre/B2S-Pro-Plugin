@@ -22,7 +22,7 @@ public:
    ~B2SProDynamicLighting();
 
    // Draws what the light adds over the snippets below it (alpha is the light's brightness)
-   void DrawLight(VPXRenderContext2D* ctx, const B2SBulb& light, const vector<std::unique_ptr<B2SBulb>>& candidates, B2SDualMode dualMode, float alpha);
+   void DrawLight(VPXRenderContext2D* ctx, const B2SBulb& light, const vector<std::unique_ptr<B2SBulb>>& candidates, B2SDualMode dualMode, float alpha, float offsetX = 0.f, float offsetY = 0.f);
 
    // Snippet frame sampling, shared with other B2S Pro CPU paths: current frame of a snippet
    // (its image placed, and turned for native rotation, as it is drawn) cropped to an area
