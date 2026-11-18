@@ -1,2 +1,4 @@
 build/
-
+build-dev/
+# The upstream files are fetched by fetch-upstream.py (pinned commits + SHA-256), not hosted here
+upstream/

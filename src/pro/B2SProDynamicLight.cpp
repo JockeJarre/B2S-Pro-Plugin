@@ -6,8 +6,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <execution>
 #include <numeric>
+
+// B2S Pro: std::execution::par is not portable: libstdc++ needs libtbb linked at run time (the
+// plugin would load with an undefined symbol on VPX) and libc++ ships par only from version 19
+// (the macOS SDK of the CI runner does not have it). Only MSVC uses the parallel policy, the
+// other platforms run the row bodies serially, same results, just slower
+#if defined(_MSC_VER)
+   #include <execution>
+#endif
 
 namespace B2S {
 
@@ -25,7 +32,11 @@ static void ParallelRows(int count, const std::function<void(int)>& body)
 {
    vector<int> rows(static_cast<size_t>(std::max(0, count)));
    std::iota(rows.begin(), rows.end(), 0);
+#if defined(_MSC_VER)
    std::for_each(std::execution::par, rows.begin(), rows.end(), [&body](int y) { body(y); });
+#else
+   std::for_each(rows.begin(), rows.end(), [&body](int y) { body(y); });
+#endif
 }
 
 // BlurDoubleMapWithWorkspace: box blur, horizontal then vertical, radius in pixels
