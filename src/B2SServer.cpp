@@ -441,6 +441,27 @@ std::shared_ptr<B2STable> B2SServer::LoadB2SFile(const std::filesystem::path& pa
          b2s = std::make_shared<B2STable>(*b2sTree.FirstChildElement("DirectB2SData"));
       else
          LOGE("Invalid B2S file: " + PluginStrings::PathToUTF8(path));
+
+      // B2S Pro: a .B2SPro file without DMD positions (<Displays>) uses the ones saved by the VPX B2S plugin in the
+      // .directb2s of the same name in the same folder. That file is only read, never written.
+      string extension = PluginStrings::PathToUTF8(path.extension());
+      std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+      if (b2s && b2s->m_dmdDisplays.empty() && extension == ".b2spro")
+      {
+         const std::filesystem::path legacyPath = find_case_insensitive_file_path(path.parent_path() / (PluginStrings::PathToUTF8(path.stem()) + ".directb2s"));
+         if (std::ifstream legacyFile(legacyPath, std::ios::binary); !legacyPath.empty() && legacyFile)
+         {
+            const std::string legacyBuffer((std::istreambuf_iterator<char>(legacyFile)), std::istreambuf_iterator<char>());
+            tinyxml2::XMLDocument legacyTree;
+            if (legacyTree.Parse(legacyBuffer.c_str(), legacyBuffer.size()) == tinyxml2::XML_SUCCESS)
+               if (const tinyxml2::XMLElement* legacyRoot = legacyTree.FirstChildElement("DirectB2SData"))
+               {
+                  b2s->m_dmdDisplays = B2STable::ReadDMDDisplays(*legacyRoot);
+                  if (!b2s->m_dmdDisplays.empty())
+                     LOGI("B2S Pro: using the " + std::to_string(b2s->m_dmdDisplays.size()) + " DMD position(s) saved in " + PluginStrings::PathToUTF8(legacyPath));
+               }
+         }
+      }
    }
    catch (...)
    {

@@ -516,6 +516,10 @@ class B2STable final
 public:
    explicit B2STable(const tinyxml2::XMLNode& root) noexcept; // Create from the root 'DirectB2SData' node
 
+   // B2S Pro: the <DMD> children of the <Displays> element of a root 'DirectB2SData' node (the constructor's
+   // reading, also used for the .directb2s fallback of a .B2SPro file without <Displays>)
+   static vector<B2SDMDDisplay> ReadDMDDisplays(const tinyxml2::XMLNode& root);
+
 public:
    // Find the score display matching the given display id (searches both backglass and DMD displays)
    const B2SScore* FindScoreDisplay(int displayId) const;

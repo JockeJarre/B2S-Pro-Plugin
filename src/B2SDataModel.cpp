@@ -1051,6 +1051,72 @@ void B2SAnimation::EndRun(const B2SAnimationEffects& fx)
          fx.setGroup(group, m_lightsStateAtAnimationEnd == B2SLightsStateAtAnimationEnd::InvolvedLightsOn);
 }
 
+vector<B2SDMDDisplay> B2STable::ReadDMDDisplays(const tinyxml2::XMLNode& root)
+{
+   vector<B2SDMDDisplay> result;
+   // Optional plugin-authored <Displays> element (ignored by other B2S tools): its <DMD> children
+   // declare DMD overlays; other display kinds (CRT/LCD) may be added as children later
+   if (const tinyxml2::XMLElement* displays = GetNode(root, "Displays"s))
+   {
+      for (const tinyxml2::XMLElement* dmd = displays->FirstChildElement("DMD"); dmd != nullptr; dmd = dmd->NextSiblingElement("DMD"))
+      {
+         B2SDMDDisplay& display = result.emplace_back();
+         const char* const target = dmd->Attribute("Target");
+         display.target = target != nullptr && string_to_lower(target) == "scoreview"s ? 1 : 0;
+         if (const char* const source = dmd->Attribute("Source"); source != nullptr)
+            display.source = source;
+         display.x = dmd->IntAttribute("X", 0);
+         display.y = dmd->IntAttribute("Y", 0);
+         display.w = dmd->IntAttribute("W", 0);
+         display.h = dmd->IntAttribute("H", 0);
+         display.options.style = PinballPlugin::OverlayDisplayStyleIndex(dmd->Attribute("Style"));
+         float f4[4];
+         if (PinballPlugin::OverlayParseFloats(dmd->Attribute("Dots"), f4, 2))
+         {
+            display.options.sizeW = static_cast<int>(f4[0]);
+            display.options.sizeH = static_cast<int>(f4[1]);
+         }
+         if (PinballPlugin::OverlayParseFloats(dmd->Attribute("Tint"), f4, 3))
+         {
+            display.options.tintR = f4[0];
+            display.options.tintG = f4[1];
+            display.options.tintB = f4[2];
+         }
+         if (PinballPlugin::OverlayParseFloats(dmd->Attribute("GlassTint"), f4, 3))
+         {
+            display.options.glassTintR = f4[0];
+            display.options.glassTintG = f4[1];
+            display.options.glassTintB = f4[2];
+         }
+         display.options.glassRoughness = dmd->FloatAttribute("GlassRoughness", 0.f);
+         if (PinballPlugin::OverlayParseFloats(dmd->Attribute("GlassAmbient"), f4, 3))
+         {
+            display.options.glassAmbientR = f4[0];
+            display.options.glassAmbientG = f4[1];
+            display.options.glassAmbientB = f4[2];
+         }
+         if (PinballPlugin::OverlayParseFloats(dmd->Attribute("GlassArea"), f4, 4))
+         {
+            display.options.glassAreaX = static_cast<int>(f4[0]);
+            display.options.glassAreaY = static_cast<int>(f4[1]);
+            display.options.glassAreaW = static_cast<int>(f4[2]);
+            display.options.glassAreaH = static_cast<int>(f4[3]);
+         }
+         if (PinballPlugin::OverlayParseFloats(dmd->Attribute("GlassPad"), f4, 4))
+         {
+            display.options.glassPadL = f4[0];
+            display.options.glassPadT = f4[1];
+            display.options.glassPadR = f4[2];
+            display.options.glassPadB = f4[3];
+         }
+         if (const tinyxml2::XMLElement* glassImage = dmd->FirstChildElement("GlassImage"))
+            if (const char* const value = glassImage->Attribute("Value"))
+               display.glassImage = base64_decode(value, strlen(value));
+      }
+   }
+   return result;
+}
+
 B2STable::B2STable(const tinyxml2::XMLNode& root) noexcept
    : m_version(GetStringAttribute(root, ""s, "Version"s, ""s))
    , m_name(GetStringAttribute(root, "Name"s, "Value"s, ""s))
@@ -1121,66 +1187,7 @@ B2STable::B2STable(const tinyxml2::XMLNode& root) noexcept
       }
    }
 
-   // Optional plugin-authored <Displays> element (ignored by other B2S tools): its <DMD> children
-   // declare DMD overlays; other display kinds (CRT/LCD) may be added as children later
-   if (const tinyxml2::XMLElement* displays = GetNode(root, "Displays"s))
-   {
-      for (const tinyxml2::XMLElement* dmd = displays->FirstChildElement("DMD"); dmd != nullptr; dmd = dmd->NextSiblingElement("DMD"))
-      {
-         B2SDMDDisplay& display = m_dmdDisplays.emplace_back();
-         const char* const target = dmd->Attribute("Target");
-         display.target = target != nullptr && string_to_lower(target) == "scoreview"s ? 1 : 0;
-         if (const char* const source = dmd->Attribute("Source"); source != nullptr)
-            display.source = source;
-         display.x = dmd->IntAttribute("X", 0);
-         display.y = dmd->IntAttribute("Y", 0);
-         display.w = dmd->IntAttribute("W", 0);
-         display.h = dmd->IntAttribute("H", 0);
-         display.options.style = PinballPlugin::OverlayDisplayStyleIndex(dmd->Attribute("Style"));
-         float f4[4];
-         if (PinballPlugin::OverlayParseFloats(dmd->Attribute("Dots"), f4, 2))
-         {
-            display.options.sizeW = static_cast<int>(f4[0]);
-            display.options.sizeH = static_cast<int>(f4[1]);
-         }
-         if (PinballPlugin::OverlayParseFloats(dmd->Attribute("Tint"), f4, 3))
-         {
-            display.options.tintR = f4[0];
-            display.options.tintG = f4[1];
-            display.options.tintB = f4[2];
-         }
-         if (PinballPlugin::OverlayParseFloats(dmd->Attribute("GlassTint"), f4, 3))
-         {
-            display.options.glassTintR = f4[0];
-            display.options.glassTintG = f4[1];
-            display.options.glassTintB = f4[2];
-         }
-         display.options.glassRoughness = dmd->FloatAttribute("GlassRoughness", 0.f);
-         if (PinballPlugin::OverlayParseFloats(dmd->Attribute("GlassAmbient"), f4, 3))
-         {
-            display.options.glassAmbientR = f4[0];
-            display.options.glassAmbientG = f4[1];
-            display.options.glassAmbientB = f4[2];
-         }
-         if (PinballPlugin::OverlayParseFloats(dmd->Attribute("GlassArea"), f4, 4))
-         {
-            display.options.glassAreaX = static_cast<int>(f4[0]);
-            display.options.glassAreaY = static_cast<int>(f4[1]);
-            display.options.glassAreaW = static_cast<int>(f4[2]);
-            display.options.glassAreaH = static_cast<int>(f4[3]);
-         }
-         if (PinballPlugin::OverlayParseFloats(dmd->Attribute("GlassPad"), f4, 4))
-         {
-            display.options.glassPadL = f4[0];
-            display.options.glassPadT = f4[1];
-            display.options.glassPadR = f4[2];
-            display.options.glassPadB = f4[3];
-         }
-         if (const tinyxml2::XMLElement* glassImage = dmd->FirstChildElement("GlassImage"))
-            if (const char* const value = glassImage->Attribute("Value"))
-               display.glassImage = base64_decode(value, strlen(value));
-      }
-   }
+   m_dmdDisplays = ReadDMDDisplays(root);
 
    // Score digit numbering: displays without an explicit B2SStartDigit are numbered sequentially
    // over all Score nodes in file order (both backglass and DMD parents share the same counter)
