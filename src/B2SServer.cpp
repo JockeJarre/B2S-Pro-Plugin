@@ -39,11 +39,32 @@ MSGPI_ENUM_VAL_SETTING(usedLEDTypeProp, "UsedLEDType", "Used LED type", "Force t
 MSGPI_INT_VAL_SETTING(allAnimationSlowDownProp, "AllAnimationSlowDown", "Global animation slowdown", "Slowdown factor applied to all backglass animations", true, 1, 100, 1);
 MSGPI_STRING_VAL_SETTING(animationSlowDownsProp, "AnimationSlowDowns", "Per-animation slowdowns", "Semicolon separated 'name=factor' animation slowdown overrides", true, "", 1024);
 
+// B2S Pro: loose backglass file matching. The B2S Pro Server convention names the pair
+// 'FlipperName (Company Year)', so a table carrying extra text (version, mod, ...) has no backglass
+// named after it. With the strict match turned off, a table without a full name match is matched
+// through its first closing parenthesis: 'Big Guns (Williams 1987) Something Else.vpx' takes
+// 'Big Guns (Williams 1987).B2SPro'. A full name match stays the first resort whatever is set
+MSGPI_BOOL_VAL_SETTING(strictFileNameProp, "StrictFileNameMatch", "Strict file name match",
+   "Load only a backglass named exactly after the table (or after its folder). Turn off to also accept "
+   "a backglass named up to the table name's closing parenthesis: 'Big Guns (Williams 1987) Mod.vpx' "
+   "takes 'Big Guns (Williams 1987).B2SPro'", true, true);
+
+// When several backglass files fit the table, take one of them at random (both .B2SPro and
+// .directb2s take part in the draw). An exact name match always beats the loosely fitting names, so
+// an exact match deactivates the random search. Only used when the strict file name match is off
+MSGPI_BOOL_VAL_SETTING(randomFileNameProp, "RandomFileNameMatch", "Random select among names that fit",
+   "When several backglass files fit the table, select one of them at random (both .B2SPro and "
+   ".directb2s take part in the draw). An exact table name match always beats the names that fit "
+   "loosely, so having an exact match deactivates the random search. Only used when 'Strict file name "
+   "match' is off", true, false);
+
 void B2SServer::RegisterSettings(const MsgPluginAPI* const msgApi, unsigned int endpointId)
 {
    msgApi->RegisterSetting(endpointId, &usedLEDTypeProp);
    msgApi->RegisterSetting(endpointId, &allAnimationSlowDownProp);
    msgApi->RegisterSetting(endpointId, &animationSlowDownsProp);
+   msgApi->RegisterSetting(endpointId, &strictFileNameProp);
+   msgApi->RegisterSetting(endpointId, &randomFileNameProp);
 }
 
 namespace
@@ -59,6 +80,10 @@ namespace
    void MSGPIAPI SlowdownsSet(void*, const char* v) { animationSlowDownsProp_Set(v); }
    int MSGPIAPI LedTypeGet(void*) { return usedLEDTypeProp_Get(); }
    void MSGPIAPI LedTypeSet(void*, int v) { usedLEDTypeProp_Set(v); }
+   int MSGPIAPI StrictNameGet(void*) { return strictFileNameProp_Get(); }
+   void MSGPIAPI StrictNameSet(void*, int v) { strictFileNameProp_Set(v); }
+   int MSGPIAPI RandomNameGet(void*) { return randomFileNameProp_Get(); }
+   void MSGPIAPI RandomNameSet(void*, int v) { randomFileNameProp_Set(v); }
 
    void FillHeader(PagedUIItemDef& item, const char* label)
    {
@@ -76,7 +101,7 @@ namespace
       info->info = nullptr;
    }
 
-   unsigned int MSGPIAPI SettingsItemCount(void*, const char*) { return 10; }
+   unsigned int MSGPIAPI SettingsItemCount(void*, const char*) { return 12; }
 
    void MSGPIAPI SettingsGetItems(void*, const char*, PagedUIItemDef* items)
    {
@@ -107,6 +132,24 @@ namespace
       slowdowns.tooltip = "Semicolon separated 'name=factor' animation slowdown overrides";
       slowdowns.storage = PAGEDUI_STORAGE_HOST;
       slowdowns.stringProp = { "", &SlowdownsGet, &SlowdownsSet };
+      PagedUIItemDef& strictName = items[pos++];
+      strictName = {};
+      strictName.type = PAGEDUI_ITEM_BOOL;
+      strictName.id = "StrictFileNameMatch";
+      strictName.label = "Strict file name match";
+      strictName.tooltip = "Load only a backglass named exactly after the table (or after its folder). Turn off to also accept a backglass named up to the table name's closing parenthesis: 'Big Guns (Williams 1987) Mod.vpx' takes 'Big Guns (Williams 1987).B2SPro'";
+      strictName.storage = PAGEDUI_STORAGE_HOST;
+      strictName.boolProp = { 1, &StrictNameGet, &StrictNameSet };
+      PagedUIItemDef& randomName = items[pos++];
+      randomName = {};
+      randomName.type = PAGEDUI_ITEM_BOOL;
+      randomName.id = "RandomFileNameMatch";
+      randomName.label = "Random select among names that fit";
+      randomName.tooltip = "When several backglass files fit the table, select one of them at random (both .B2SPro and .directb2s take part in the draw). An exact table name match always beats the names that fit loosely, so having an exact match deactivates the random search. Only used when 'Strict file name match' is off";
+      randomName.storage = PAGEDUI_STORAGE_HOST;
+      randomName.boolProp = { 0, &RandomNameGet, &RandomNameSet };
+      // Shown only when the loose matching is active (the strict match leaves nothing to choose from)
+      randomName.flags = strictFileNameProp_Get() ? PAGEDUI_ITEMF_HIDDEN : 0;
       FillHeader(items[pos++], "Modify Backglass");
    }
 
@@ -519,24 +562,118 @@ std::shared_ptr<B2STable> B2SServer::LoadB2SFile(const std::filesystem::path& pa
 // where the table shares a folder with its companion files (b2s, pup, flex, music, ...)
 // B2S Pro: the complete lookup runs for .B2SPro first; .directb2s is only used when no
 // .B2SPro file exists (same order as the B2S Pro Server, formBackglass FindBackglassFile).
+//
+// Loose matching ('Strict file name match' off): a table without an exact match is matched through
+// its first closing parenthesis, 'Big Guns (Williams 1987) Something Else.vpx' takes
+// 'Big Guns (Williams 1987).B2SPro' (the B2S Pro Server naming convention is 'FlipperName (Company
+// Year)', so tables carrying extra text find their pair). An exact match always wins, the .B2SPro
+// keeps outranking the legacy .directb2s, and a folder holding several variants resolves to the name
+// closest to the prefix (the shortest, then alphabetically) so that it resolves the same way at every
+// load. A name without parenthesis has the whole name as prefix, so it is only ever matched exactly.
+//
+// 'Random select among names that fit' (loose matching only): when several files fit, one is taken at
+// random, both .B2SPro and .directb2s taking part in the draw. An exact match always beats the
+// loosely fitting names, so an exact match deactivates the random search (within the exact names the
+// draw mixes the extensions too).
+namespace
+{
+   // The loose matching prefix: the name up to its first closing parenthesis
+   string B2SFileNamePrefix(const string& name)
+   {
+      const size_t pos = name.find(')');
+      return pos == string::npos ? name : name.substr(0, pos + 1);
+   }
+
+   // Every file of the folder whose stem starts with the prefix (case insensitive) carrying the given
+   // extension. 'best' gets the one closest to the prefix (the shortest, then alphabetically), 'all'
+   // collects them all for the random draw
+   void FindB2SFilesLoose(const std::filesystem::path& dir, const string& prefix, const std::string_view extension,
+      std::filesystem::path& best, vector<std::filesystem::path>& all)
+   {
+      const string prefixLc = string_to_lower(prefix);
+      const string extLc = string_to_lower(string(extension));
+      if (prefixLc.empty())
+         return;
+      std::error_code ec;
+      for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(dir, ec))
+      {
+         if (ec)
+            break; // Unreadable folder
+         const std::filesystem::path& file = entry.path();
+         if (!entry.is_regular_file(ec) || string_to_lower(PluginStrings::PathToUTF8(file.extension())) != extLc)
+            continue;
+         const string stem = string_to_lower(PluginStrings::PathToUTF8(file.stem()));
+         if (stem.empty() || stem.compare(0, prefixLc.length(), prefixLc) != 0)
+            continue;
+         all.push_back(file);
+         if (best.empty() || file.filename().native().length() < best.filename().native().length()
+            || (file.filename().native().length() == best.filename().native().length() && string_to_lower(PluginStrings::PathToUTF8(file.filename())) < string_to_lower(PluginStrings::PathToUTF8(best.filename()))))
+            best = file;
+      }
+   }
+}
+
 std::filesystem::path B2SServer::FindB2SFile() const
 {
    const std::filesystem::path dir = m_workingDir.empty() ? m_tableDir : m_workingDir;
    if (dir.empty() || m_tableName.empty())
       return {};
-   for (const string& extension : { ".B2SPro"s, ".directb2s"s })
+
+   const auto tryFile = [&dir](const string& name, const string& extension) { return name.empty() ? std::filesystem::path() : find_case_insensitive_file_path(dir / (name + extension)); };
+   const string folderName = PluginStrings::PathToUTF8(dir.filename());
+   const auto exactFiles = [&]() {
+      vector<std::filesystem::path> hits;
+      for (const string& extension : { ".B2SPro"s, ".directb2s"s })
+         for (const string& name : { m_tableName, folderName })
+         {
+            const auto file = tryFile(name, extension);
+            if (!file.empty() && std::find(hits.begin(), hits.end(), file) == hits.end())
+               hits.push_back(file);
+         }
+      return hits; // Priority order: .B2SPro first, the table name before the folder name
+   };
+   const auto draw = [](vector<std::filesystem::path>& pool) {
+      if (pool.empty())
+         return std::filesystem::path();
+      if (!randomFileNameProp_Get())
+         return pool.front();
+      static std::mt19937 rng { std::random_device {}() };
+      std::uniform_int_distribution<size_t> pick(0, pool.size() - 1);
+      return pool[pick(rng)];
+   };
+
+   // An exact match always wins. Under the strict match it is the whole lookup; with the random draw
+   // active the draw mixes the exact names (the table and folder names, .B2SPro and .directb2s)
+   auto exact = exactFiles();
+   if (!exact.empty() && (strictFileNameProp_Get() || !randomFileNameProp_Get()))
+      return exact.front();
+   if (!exact.empty())
+      return draw(exact);
+   if (strictFileNameProp_Get())
+      return {};
+
+   // Loose matching: the first prefix that fits wins, .B2SPro over .directb2s, the table name over
+   // the folder name; the name closest to the prefix (shortest, then alphabetically) under the
+   // deterministic setting, any of the fitting names under the random draw
+   vector<std::filesystem::path> pool = exact;
+   for (const string& name : { m_tableName, folderName })
    {
-      const auto tryFile = [&dir, &extension](const string& name) { return name.empty() ? std::filesystem::path() : find_case_insensitive_file_path(dir / (name + extension)); };
-
-      if (auto file = tryFile(m_tableName); !file.empty())
-         return file;
-
-      if (const string folderName = PluginStrings::PathToUTF8(dir.filename()); !folderName.empty())
-         if (auto file = tryFile(folderName); !file.empty())
-            return file;
+      const string prefix = B2SFileNamePrefix(name);
+      if (prefix == name)
+         continue; // The name has no parenthesis, so the loose matching is the exact one tried above
+      for (const string& extension : { ".B2SPro"s, ".directb2s"s })
+      {
+         std::filesystem::path best;
+         vector<std::filesystem::path> all;
+         FindB2SFilesLoose(dir, prefix, extension, best, all);
+         for (const auto& file : all)
+            if (std::find(pool.begin(), pool.end(), file) == pool.end())
+               pool.push_back(file);
+         if (!best.empty() && !randomFileNameProp_Get())
+            return best;
+      }
    }
-
-   return {};
+   return draw(pool);
 }
 
 void B2SServer::TryLoadB2S()
