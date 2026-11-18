@@ -138,6 +138,7 @@ struct ProBulbRuntime
    // Pivot rotation (SetPivotTriggerState / SetPivotRotationTarget / PivotRotationTimer_Tick)
    bool pivotRotation = false;
    bool automaticOscillation = false;
+   bool triggerReverse = false; // Rest while the trigger is on, move while it is off
    bool automaticActive = false;
    bool moving = false;
    bool startupPivot = false;
@@ -237,6 +238,15 @@ struct B2SProBulbData
    float pivotUpAngle = -30.f;
    string pivotDownTrigger;
    string pivotUpTrigger;
+   // Pivot-to-pivot strike: this pivot hits the named physics pivot (empty = off)
+   // Counterweight of a free-spin physics pivot (normalized to the image, like pivotX/Y)
+   bool pivotTriggerReverse = false; // Rest while the trigger is on, move while it is off
+   bool pivotWeight = false;
+   float pivotWeightX = 0.5f, pivotWeightY = 1.f, pivotWeightStrength = 50.f;
+   string pivotStrikeTarget;
+   float pivotStrikeStrength = 100.f;
+   bool pivotStrikeContact = true; // false: no-contact kick in pivotStrikeDirection
+   int pivotStrikeDirection = 1; // 1 clockwise, -1 counter-clockwise
    int pivotTriggerType = 1;
    int pivotTriggerId = 0;
    float pivotRandomStrength = 0.f;

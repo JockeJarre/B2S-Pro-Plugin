@@ -50,16 +50,21 @@ private:
    void RenderLegacyScoreDisplay(VPXRenderContext2D* ctx, B2SServer* server, const B2SScore& reel, bool dream7, const std::vector<SegElementType>& segTypes,
       const ankerl::unordered_dense::map<int, string>& playerScoreText, ankerl::unordered_dense::map<int, size_t>& playerScoreOffset, const ProScoreTransform* transform = nullptr);
    // B2S Pro reel digit: digit sizing, 3D reel and rotation/perspective (CPU composed, cached per digit)
-   void DrawProReelDigit(VPXRenderContext2D* ctx, const B2SScore& reel, int digit, VPXTexture image, bool illuminated, float x, float width);
+   // strip: the Realistic style's numbers at offsets -2..+2 (nullptr = none); roll: the drum's turn (-1..1)
+   void DrawProReelDigit(VPXRenderContext2D* ctx, const B2SScore& reel, int digit, VPXTexture image, bool illuminated, float x, float width, const VPXTexture* strip = nullptr, double roll = 0.0);
    struct ProDigitCache
    {
       VPXTexture source = nullptr;
       bool backlight = false;
+      double roll = 0.0;
       bool valid = false;
       VPXTexture tex = nullptr;
       float x = 0.f, y = 0.f, w = 0.f, h = 0.f;
    };
    std::map<std::pair<const B2SScore*, int>, ProDigitCache> m_proDigits;
+   // B2S Pro 3D reels: the strips between digits get their part of the window overlay (formBackglass ReelGapOverlay)
+   void DrawProReelGaps(VPXRenderContext2D* ctx, const B2SScore& reel, float width);
+   std::map<std::pair<const B2SScore*, int>, ProDigitCache> m_proReelGaps;
    std::map<VPXTexture, ProImage> m_proReelImages; // Decoded reel images
    std::map<const B2SScore*, ProImage> m_proReelOverlays; // Reel3D window overlays
    static ProScoreTransform ProTransformOf(const B2SScore& score);

@@ -4,11 +4,11 @@ A Visual Pinball X plugin that shows B2S Pro backglasses (`.B2SPro`) made with t
 [B2S Pro Designer](https://github.com/KWildman69/B2S-Pro), plus legacy `.directb2s` backglasses.
 It is built on the B2S plugin that ships with VPX.
 
-Version 1.0.0, for VPinballX_BGFX 10.8.1 (64-bit Windows). Please report problems on the [Issues](https://github.com/KWildman69/B2S-Pro-Plugin/issues) page.
+Version 1.1.0, for VPinballX_BGFX 10.8.1 (64-bit Windows). Please report problems on the [Issues](https://github.com/KWildman69/B2S-Pro-Plugin/issues) page.
 
 ## Install
 
-1. Download `B2S-Pro-Plugin-1.0.0.zip` from the [Releases](https://github.com/KWildman69/B2S-Pro-Plugin/releases) page.
+1. Download `B2S-Pro-Plugin-1.1.0.zip` from the [Releases](https://github.com/KWildman69/B2S-Pro-Plugin/releases) page.
    To check the download, compare its SHA-256 with the `.sha256` file.
 2. Close VPX.
 3. Unzip it and copy the `b2spro` folder into VPX's `plugins` folder, so you have

@@ -84,6 +84,38 @@ private:
    std::unordered_map<string, B2SBulb*> m_pivotsByName; // PivotPicturesByName (lower case)
    vector<B2SBulb*> m_physicsPivots;
 
+   // B2SData.PivotStrikeLink: a triggered pivot whose silhouette strikes a physics pivot
+   struct StrikeShape
+   {
+      vector<ProPoint> contour;
+      int maskW = 0, maskH = 0;
+      float hingeX = 0.f, hingeY = 0.f, originX = 0.f, originY = 0.f, maxHingeRadius = 0.f;
+      vector<float> radii, sampleLengths;
+      bool Usable() const { return contour.size() >= 8 && maskW > 1 && maskH > 1; }
+   };
+   struct StrikeLink
+   {
+      B2SBulb* driver = nullptr;
+      B2SBulb* target = nullptr;
+      float strength = 100.f;
+      StrikeShape driverShape, targetShape;
+      // No-contact kick (PivotKickState)
+      bool contact = true;
+      int direction = 1, upSign = 1;
+      float kickLastSpeed = 0.f;
+      bool kickFired = false;
+   };
+   vector<StrikeLink> m_strikes;
+   static StrikeShape MakeStrikeShape(const B2SBulb& pivot);
+   static void ResolveStrike(StrikeLink& link, double elapsed);
+
+public:
+   // PivotStrikeAngularDelta of shared/PhysicsBallState.vb
+   static float PivotStrikeAngularDelta(const StrikeShape& driver, const ProRect& driverBounds, float driverAngle, float driverAngularVelocity,
+      const StrikeShape& target, const ProRect& targetBounds, float targetAngle, float targetAngularVelocity, float strengthPercent);
+
+private:
+
    struct LauncherRoute
    {
       vector<size_t> balls;

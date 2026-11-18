@@ -525,6 +525,42 @@ bool B2SReelDigit::Update(float elapsedInS, int rollingIntervalMs, int intermedi
    return advanced;
 }
 
+bool B2SReelDigit::UpdateSmooth(float elapsedInS, double stepMs, bool rollUp)
+{
+   if (!m_rolling)
+   {
+      m_current = m_target;
+      m_intermediate = 0;
+      m_settle = 0;
+      m_accMs = 0.f;
+      m_smoothMs = 0.0;
+      m_roll = 0.0;
+      return false;
+   }
+   stepMs = std::max(1.0, stepMs);
+   m_smoothMs += static_cast<double>(elapsedInS) * 1000.0;
+   bool advanced = false;
+   while (m_rolling && m_smoothMs >= stepMs)
+   {
+      m_smoothMs -= stepMs;
+      m_current += rollUp ? 1 : -1;
+      if (m_current > 9)
+         m_current = 0;
+      else if (m_current < 0)
+         m_current = 9;
+      advanced = true;
+      if (m_current == m_target)
+      {
+         m_rolling = false;
+         m_smoothMs = 0.0;
+      }
+   }
+   m_intermediate = 0;
+   m_settle = 0;
+   m_roll = m_rolling ? (rollUp ? 1.0 : -1.0) * (m_smoothMs / stepMs) : 0.0;
+   return advanced;
+}
+
 
 B2SScore::B2SScore(const tinyxml2::XMLNode& root) noexcept
    : m_id(GetIntAttribute(root, ""s, "ID"s, 0))
@@ -554,6 +590,11 @@ B2SScore::B2SScore(const tinyxml2::XMLNode& root) noexcept
    , m_reel3DTemperature(std::clamp(GetIntAttribute(root, ""s, "Reel3DTemperature"s, 4000), 2000, 6500))
    , m_reel3DDepth(std::clamp(GetIntAttribute(root, ""s, "Reel3DDepth"s, 100), 0, 200))
    , m_reel3DGlass(std::clamp(GetIntAttribute(root, ""s, "Reel3DGlass"s, 55), 0, 200))
+   , m_reel3DStyle(std::clamp(GetIntAttribute(root, ""s, "Reel3DStyle"s, 0), 0, 1))
+   , m_reel3DCurve(std::clamp(GetIntAttribute(root, ""s, "Reel3DCurve"s, 100), 0, 300))
+   , m_reel3DShadow(std::clamp(GetIntAttribute(root, ""s, "Reel3DShadow"s, 100), 0, 200))
+   , m_reel3DGlassStyle(std::clamp(GetIntAttribute(root, ""s, "Reel3DGlassStyle"s, 0), 0, 2))
+   , m_reel3DDividerWidth(GetIntAttribute(root, ""s, "Reel3DDividers"s, 0) == 1 ? std::clamp(GetIntAttribute(root, ""s, "Reel3DDividerWidth"s, 8), 1, 60) : 0)
    , m_locX(GetIntAttribute(root, ""s, "LocX"s, 0))
    , m_locY(GetIntAttribute(root, ""s, "LocY"s, 0))
    , m_width(GetIntAttribute(root, ""s, "Width"s, 0))

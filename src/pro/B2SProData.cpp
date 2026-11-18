@@ -271,6 +271,15 @@ B2SProBulbData::B2SProBulbData(const tinyxml2::XMLElement& node)
    ReadInt(node, "PivotDuration", pivotDuration);
    pivotDownTrigger = ReadTrimmed(node, "PivotDownTrigger");
    pivotUpTrigger = ReadTrimmed(node, "PivotUpTrigger");
+   pivotTriggerReverse = IsOne(node, "PivotTriggerReverse");
+   pivotWeight = IsOne(node, "PivotWeight");
+   ReadFloat(node, "PivotWeightX", pivotWeightX);
+   ReadFloat(node, "PivotWeightY", pivotWeightY);
+   ReadFloat(node, "PivotWeightStrength", pivotWeightStrength);
+   pivotStrikeTarget = ReadTrimmed(node, "PivotStrikeTarget");
+   ReadFloat(node, "PivotStrikeStrength", pivotStrikeStrength);
+   pivotStrikeContact = ReadTrimmed(node, "PivotStrikeContact") != "0";
+   pivotStrikeDirection = ReadTrimmed(node, "PivotStrikeDirection") == "-1" ? -1 : 1;
    ReadInt(node, "PivotTriggerType", pivotTriggerType);
    ReadInt(node, "PivotTriggerID", pivotTriggerId);
 

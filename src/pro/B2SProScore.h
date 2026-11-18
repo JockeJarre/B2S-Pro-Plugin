@@ -43,7 +43,15 @@ ProImage ProReelStretchToWidth(const ProImage& source, int targetW, int targetH,
 
 // Reel3DEffect
 ProImage ProReel3DRender(const ProImage& source, int targetW, int targetH, int brightness, int temperature, int depth);
-ProImage ProReel3DWindowOverlay(int displayW, int displayH, int depth, int glassReflection);
+// glassStyle: 0 the original reflection lines, 1 soft wide, 2 soft streaks (ReelGlass)
+// dividerCenters: B2S Pro reel divider centres in display pixels (nullptr or dividerWidth 0 = none)
+ProImage ProReel3DWindowOverlay(int displayW, int displayH, int depth, int glassReflection, int glassStyle, const std::vector<double>* dividerCenters = nullptr, int dividerWidth = 0);
+// Realistic reel style (ReelRealistic): numbers[0..4] = the strip at offsets -2..+2 around the shown
+// number (+1 = the next number, above; null = paper); roll -1..1 toward the next (+) / previous (-)
+ProImage ProReelRealisticRender(const ProImage* const numbers[5], int w, int h, bool keepAspect, int digitWidth,
+   int brightness, int temperature, int depth, int curve, int shadow, double roll);
+// ReelRealistic.StepMilliseconds: the time one reel step takes
+double ProReelStepMs(int rollingIntervalMs, int intermediates);
 
 // ScoreTransform
 struct ProScoreTransform

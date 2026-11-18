@@ -102,6 +102,9 @@ B2SRenderer::~B2SRenderer()
    for (auto& [key, digit] : m_proDigits)
       if (digit.tex != nullptr)
          DeleteTexture(digit.tex);
+   for (auto& [key, gap] : m_proReelGaps)
+      if (gap.tex != nullptr)
+         DeleteTexture(gap.tex);
    for (auto& [key, state] : m_legacySegDisplays)
       for (VPXTexture tex : state.warped)
          if (tex != nullptr)
@@ -877,7 +880,11 @@ void B2SRenderer::RenderScores(VPXRenderContext2D* ctx, B2SServer* server, const
                // script driven displays roll when B2SSetScore/B2SSetReel raised the roll flag.
                // LED image displays never roll (B2SReelBox::isLED).
                st.SetTarget(digit, reel.m_scoreType == B2SScoreRenderer::Reel && (reel.m_b2sPlayerNo != 0 || server->ConsumeScoreDigitRoll(index)));
-               if (!hold[static_cast<size_t>(i)] && st.Update(elapsed, scores.m_reelRollingInterval, intermediates, rollUp))
+               // B2S Pro Realistic reel style: the drum turns smoothly instead of showing intermediate images
+               const bool smoothRoll = m_b2s->m_unifiedLayerDeck && reel.m_reel3DEnabled && reel.m_reel3DStyle == 1 && reel.m_scoreType == B2SScoreRenderer::Reel;
+               if (!hold[static_cast<size_t>(i)]
+                  && (smoothRoll ? st.UpdateSmooth(elapsed, ProReelStepMs(scores.m_reelRollingInterval, intermediates), rollUp)
+                                 : st.Update(elapsed, scores.m_reelRollingInterval, intermediates, rollUp)))
                {
                   // Reel roll sound: per-digit Sound1..N attribute, or the display wide Sound attribute
                   const string& soundName
@@ -886,7 +893,7 @@ void B2SRenderer::RenderScores(VPXRenderContext2D* ctx, B2SServer* server, const
                      server->B2SPlaySound(soundName);
                }
                shownDigit = st.Current();
-               intermediate = st.Intermediate();
+               intermediate = smoothRoll ? 0 : st.Intermediate();
                const B2SReelImage* reelImage = m_b2s->m_reels.GetImage(reel.m_reelType, shownDigit, illuminated, reel.m_reelIlluImageSet);
                const VPXTexture texture = (reelImage && intermediate > 0 && intermediate <= static_cast<int>(reelImage->m_intermediates.size()))
                   ? reelImage->m_intermediates[static_cast<size_t>(intermediate - 1)]
@@ -895,7 +902,19 @@ void B2SRenderer::RenderScores(VPXRenderContext2D* ctx, B2SServer* server, const
                {
                   const VPXTexture img = texture != nullptr ? texture : reelImage->m_image;
                   if (m_b2s->m_unifiedLayerDeck && (reel.m_keepDigitAspect || reel.m_reel3DEnabled || reel.m_hasTransform))
-                     DrawProReelDigit(ctx, reel, i, img, illuminated, x, width); // B2S Pro
+                  {
+                     // B2S Pro Realistic reel style: the strip around the shown number (offsets -2..+2) of the same image set
+                     VPXTexture strip[5] = { nullptr, nullptr, nullptr, nullptr, nullptr };
+                     if (reel.m_reel3DEnabled && reel.m_reel3DStyle == 1 && shownDigit >= 0 && shownDigit <= 9)
+                     {
+                        for (int offset = -2; offset <= 2; offset++)
+                        {
+                           const B2SReelImage* n = offset == 0 ? nullptr : m_b2s->m_reels.GetImage(reel.m_reelType, (shownDigit + offset + 10) % 10, illuminated, reel.m_reelIlluImageSet);
+                           strip[offset + 2] = n ? n->m_image : nullptr;
+                        }
+                     }
+                     DrawProReelDigit(ctx, reel, i, img, illuminated, x, width, strip, smoothRoll ? st.Roll() : 0.0); // B2S Pro
+                  }
                   else
                   {
                      const VPXTextureInfo* texInfo = GetTextureInfo(img);
@@ -967,6 +986,12 @@ void B2SRenderer::RenderScores(VPXRenderContext2D* ctx, B2SServer* server, const
             break;
          }
       }
+
+      // B2S Pro: the strips between the digits of a 3D reel display get their part of the window overlay, as
+      // the Designer draws it across the whole score (formBackglass ReelGapOverlay), at this score's place
+      if (m_b2s->m_unifiedLayerDeck && reel.m_reel3DEnabled && reel.m_digits > 1
+         && (reel.m_scoreType == B2SScoreRenderer::Reel || reel.m_scoreType == B2SScoreRenderer::LED || reel.m_scoreType == B2SScoreRenderer::ImportedLED))
+         DrawProReelGaps(ctx, reel, width);
    }
 }
 
@@ -1187,11 +1212,30 @@ ProScoreTransform B2SRenderer::ProTransformOf(const B2SScore& score)
    return transform;
 }
 
+// B2S Pro: the display wide 3D window overlay (Reel3DEffect.CreateWindowOverlay), with the reel dividers
+// centred on the digit boundaries as the digits below are laid out (xi - locX, digit width designW)
+static ProImage ProReelDisplayOverlay(const B2SScore& reel, int designW, int designH)
+{
+   std::vector<double> centers;
+   if (reel.m_reel3DDividerWidth > 0 && reel.m_digits > 1)
+   {
+      const int locX = reel.m_locX - 1;
+      for (int i = 0; i < reel.m_digits - 1; i++)
+      {
+         const int left = static_cast<int>(std::nearbyint(locX + i * (designW + reel.m_spacing / 2.0))) - locX;
+         const int next = static_cast<int>(std::nearbyint(locX + (i + 1) * (designW + reel.m_spacing / 2.0))) - locX;
+         centers.push_back((left + designW + next) / 2.0);
+      }
+   }
+   return ProReel3DWindowOverlay(reel.m_width, designH, reel.m_reel3DDepth, reel.m_reel3DGlass, reel.m_reel3DGlassStyle,
+      centers.empty() ? nullptr : &centers, reel.m_reel3DDividerWidth);
+}
+
 // B2S Pro: B2SReelBox.OnPaint / DrawReelImage / DrawReelImageCore. The digit image is fitted to the
 // authored digit size (KeepDigitAspect, ReelDigitWidth), given the 3D reel look (Reel3D*), covered
 // by its part of the display wide 3D window overlay, then mapped onto its slice of the rotated or
 // perspective score (ScoreTransform). Rebuilt only when the shown image or the backlight changes.
-void B2SRenderer::DrawProReelDigit(VPXRenderContext2D* ctx, const B2SScore& reel, int digit, VPXTexture image, bool illuminated, float x, float width)
+void B2SRenderer::DrawProReelDigit(VPXRenderContext2D* ctx, const B2SScore& reel, int digit, VPXTexture image, bool illuminated, float x, float width, const VPXTexture* strip, double roll)
 {
    const int digits = std::max(1, reel.m_digits);
    const int designW = std::max(1, static_cast<int>(std::nearbyint((reel.m_width - (digits - 1) * reel.m_spacing / 2.0) / digits)));
@@ -1199,23 +1243,42 @@ void B2SRenderer::DrawProReelDigit(VPXRenderContext2D* ctx, const B2SScore& reel
    // A triggered 3D reel keeps its depth and glass while unlit; its backlight follows the reel light
    const bool backlight = reel.m_reelIlluB2SID <= 0 || illuminated;
    ProDigitCache& cache = m_proDigits[{ &reel, digit }];
-   if (!cache.valid || cache.source != image || cache.backlight != backlight)
+   if (!cache.valid || cache.source != image || cache.backlight != backlight || cache.roll != roll)
    {
       cache.valid = true;
       cache.source = image;
       cache.backlight = backlight;
-      auto it = m_proReelImages.find(image);
-      if (it == m_proReelImages.end())
+      cache.roll = roll;
+      auto decode = [this](VPXTexture tex) -> const ProImage*
       {
-         ProImage decoded;
-         ProReadTexture(image, decoded);
-         it = m_proReelImages.emplace(image, std::move(decoded)).first;
+         if (tex == nullptr)
+            return nullptr;
+         auto it = m_proReelImages.find(tex);
+         if (it == m_proReelImages.end())
+         {
+            ProImage decoded;
+            ProReadTexture(tex, decoded);
+            it = m_proReelImages.emplace(tex, std::move(decoded)).first;
+         }
+         return &it->second;
+      };
+      ProImage content = *decode(image);
+      if (!content.Empty() && reel.m_reel3DEnabled && reel.m_reel3DStyle == 1)
+      {
+         // Realistic style: sized from the original artwork, on its drum (ReelRealistic)
+         const ProImage* numbers[5];
+         for (int n = 0; n < 5; n++)
+            numbers[n] = n == 2 ? &content : decode(strip ? strip[n] : nullptr);
+         content = ProReelRealisticRender(numbers, designW, designH, reel.m_keepDigitAspect, reel.m_keepDigitAspect ? reel.m_reelDigitWidth : 0,
+            backlight ? reel.m_reel3DBrightness : 0, backlight ? reel.m_reel3DTemperature : 4000, reel.m_reel3DDepth, reel.m_reel3DCurve, reel.m_reel3DShadow, roll);
       }
-      ProImage content = it->second;
-      if (!content.Empty() && reel.m_keepDigitAspect)
-         content = reel.m_reelDigitWidth > 0 ? ProReelStretchToWidth(content, designW, designH, reel.m_reelDigitWidth) : ProReelFit(content, designW, designH);
-      if (!content.Empty() && reel.m_reel3DEnabled)
-         content = ProReel3DRender(content, designW, designH, backlight ? reel.m_reel3DBrightness : 0, backlight ? reel.m_reel3DTemperature : 4000, reel.m_reel3DDepth);
+      else
+      {
+         if (!content.Empty() && reel.m_keepDigitAspect)
+            content = reel.m_reelDigitWidth > 0 ? ProReelStretchToWidth(content, designW, designH, reel.m_reelDigitWidth) : ProReelFit(content, designW, designH);
+         if (!content.Empty() && reel.m_reel3DEnabled)
+            content = ProReel3DRender(content, designW, designH, backlight ? reel.m_reel3DBrightness : 0, backlight ? reel.m_reel3DTemperature : 4000, reel.m_reel3DDepth);
+      }
 
       ProQuad quad {};
       int targetW = designW, targetH = designH;
@@ -1236,7 +1299,7 @@ void B2SRenderer::DrawProReelDigit(VPXRenderContext2D* ctx, const B2SScore& reel
       {
          auto ov = m_proReelOverlays.find(&reel);
          if (ov == m_proReelOverlays.end())
-            ov = m_proReelOverlays.emplace(&reel, ProReel3DWindowOverlay(reel.m_width, designH, reel.m_reel3DDepth, reel.m_reel3DGlass)).first;
+            ov = m_proReelOverlays.emplace(&reel, ProReelDisplayOverlay(reel, designW, designH)).first;
          const ProImage& overlay = ov->second;
          if (!overlay.Empty())
          {
@@ -1272,6 +1335,90 @@ void B2SRenderer::DrawProReelDigit(VPXRenderContext2D* ctx, const B2SScore& reel
       ctx->DrawImage(ctx, cache.tex, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, cache.w, cache.h, 0.f, 0.f, 0.f, cache.x, cache.y, cache.w, cache.h);
    else
       ctx->DrawImage(ctx, cache.tex, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, cache.w, cache.h, 0.f, 0.f, 0.f, x, static_cast<float>(reel.m_locY), width, static_cast<float>(reel.m_height));
+}
+
+// B2S Pro: formBackglass ReelGapOverlay. The strip between digits i and i + 1 draws the columns of the
+// display wide 3D window overlay that no digit covers (the same overlay and column rounding as
+// DrawProReelDigit), on the gap box or, for a rotated/perspective score, warped onto the gap's quad.
+void B2SRenderer::DrawProReelGaps(VPXRenderContext2D* ctx, const B2SScore& reel, float width)
+{
+   if (reel.m_width <= 2)
+      return;
+   const int digits = std::max(1, reel.m_digits);
+   const int designW = std::max(1, static_cast<int>(std::nearbyint((reel.m_width - (digits - 1) * reel.m_spacing / 2.0) / digits)));
+   const int designH = std::max(1, reel.m_height);
+   auto ov = m_proReelOverlays.find(&reel);
+   if (ov == m_proReelOverlays.end())
+      ov = m_proReelOverlays.emplace(&reel, ProReelDisplayOverlay(reel, designW, designH)).first;
+   const ProImage& overlay = ov->second;
+   if (overlay.Empty())
+      return;
+   const int locX = reel.m_locX - 1;
+   for (int i = 0; i < digits - 1; i++)
+   {
+      const int xi = static_cast<int>(std::nearbyint(locX + i * (designW + reel.m_spacing / 2.0)));
+      const int xn = static_cast<int>(std::nearbyint(locX + (i + 1) * (designW + reel.m_spacing / 2.0)));
+      const int sourceX = std::clamp(xi - locX + designW, 0, overlay.w);
+      const int sourceEnd = std::clamp(xn - locX, sourceX, overlay.w);
+      if (sourceEnd <= sourceX)
+         continue;
+      ProDigitCache& cache = m_proReelGaps[{ &reel, i }];
+      if (!cache.valid)
+      {
+         cache.valid = true;
+         ProQuad quad {};
+         int targetW = sourceEnd - sourceX, targetH = designH;
+         bool drawable = true;
+         if (reel.m_hasTransform)
+         {
+            const ProQuad displayQuad = ProTransformOf(reel).DisplayQuad(static_cast<float>(reel.m_locX), static_cast<float>(reel.m_locY), static_cast<float>(reel.m_width), static_cast<float>(reel.m_height));
+            const float digitU0 = (1.f + static_cast<float>(i) * (static_cast<float>(designW) + static_cast<float>(reel.m_spacing) / 2.f)) / static_cast<float>(reel.m_width);
+            const float gapU0 = std::min(1.f, digitU0 + static_cast<float>(designW) / static_cast<float>(reel.m_width));
+            const float gapU1 = std::min(1.f, (1.f + static_cast<float>(i + 1) * (static_cast<float>(designW) + static_cast<float>(reel.m_spacing) / 2.f)) / static_cast<float>(reel.m_width));
+            drawable = gapU1 > gapU0;
+            if (drawable)
+            {
+               quad = ProSubQuad(displayQuad, gapU0, gapU1, 1.f / static_cast<float>(reel.m_height), 1.f);
+               ProContentSize(quad, targetW, targetH);
+            }
+         }
+         if (drawable)
+         {
+            ProImage flat;
+            flat.Allocate(targetW, targetH);
+            ProDrawScaled(flat, overlay, sourceX, 0.0, sourceEnd - sourceX, overlay.h, 0.0, 0.0, targetW, targetH, false);
+            if (reel.m_hasTransform)
+            {
+               ProImage out;
+               int bx, by;
+               ProWarp(flat, quad, bx, by, out);
+               UpdateTexture(&cache.tex, out.w, out.h, VPXTEXFMT_sRGBA8, out.px.data());
+               cache.x = static_cast<float>(bx);
+               cache.y = static_cast<float>(by);
+               cache.w = static_cast<float>(out.w);
+               cache.h = static_cast<float>(out.h);
+            }
+            else
+            {
+               UpdateTexture(&cache.tex, flat.w, flat.h, VPXTEXFMT_sRGBA8, flat.px.data());
+               cache.w = static_cast<float>(flat.w);
+               cache.h = static_cast<float>(flat.h);
+            }
+         }
+      }
+      if (cache.tex == nullptr)
+         continue;
+      if (reel.m_hasTransform)
+         ctx->DrawImage(ctx, cache.tex, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, cache.w, cache.h, 0.f, 0.f, 0.f, cache.x, cache.y, cache.w, cache.h);
+      else
+      {
+         // Same placement as the digits: digit i ends at x + width, digit i + 1 starts at the next x
+         const float gapX0 = static_cast<float>(reel.m_locX) + static_cast<float>(i) * (width + 0.5f * static_cast<float>(reel.m_spacing)) + width;
+         const float gapX1 = static_cast<float>(reel.m_locX) + static_cast<float>(i + 1) * (width + 0.5f * static_cast<float>(reel.m_spacing));
+         if (gapX1 > gapX0)
+            ctx->DrawImage(ctx, cache.tex, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, cache.w, cache.h, 0.f, 0.f, 0.f, gapX0, static_cast<float>(reel.m_locY), gapX1 - gapX0, static_cast<float>(reel.m_height));
+      }
+   }
 }
 
 

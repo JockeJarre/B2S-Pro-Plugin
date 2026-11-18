@@ -143,6 +143,8 @@ B2SProRuntime::B2SProRuntime(B2STable& table)
                rt.moveDuration = std::clamp(pro.pivotDuration, 10, 5000);
                rt.automaticOscillation = pro.pivotAutomaticOscillation || pro.pivotTriggerType == 4;
                rt.angle = rt.automaticOscillation ? 0.f : pro.pivotDownAngle;
+               // Reverse trigger: the pivot rests while its trigger is on and moves while it is off
+               rt.triggerReverse = pro.pivotTriggerReverse && pro.pivotTriggerType != 4;
                if (pro.pivotTriggerType == 4)
                   rt.startupPivot = true;
                else
@@ -415,6 +417,8 @@ void ProSetPivotRotationTarget(ProBulbRuntime& rt, float targetAngle, int durati
 
 void ProSetPivotTriggerState(ProBulbRuntime& rt, bool enabled)
 {
+   if (rt.triggerReverse)
+      enabled = !enabled;
    if (rt.automaticOscillation)
    {
       if (enabled == rt.automaticActive)

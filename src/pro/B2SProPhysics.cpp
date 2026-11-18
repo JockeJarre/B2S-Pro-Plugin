@@ -227,6 +227,38 @@ B2SProPhysics::B2SProPhysics(B2STable& table, B2SProMotionSystem& motion)
          }
    }
 
+   // B2SData.RegisterPivotStrike: backglass pivots only, like the Server's formBackglass
+   for (auto& bulbPtr : table.m_backglassIlluminations)
+   {
+      B2SBulb* const driver = bulbPtr.get();
+      if (!driver->m_pro || !driver->m_pro->pivotAnimation || LowerTrim(driver->m_pro->pivotStrikeTarget).empty())
+         continue;
+      B2SBulb* const target = FindPivot(LowerTrim(driver->m_pro->pivotStrikeTarget));
+      if (target == nullptr || target == driver || !target->m_pro->pivotPhysicsEnabled)
+         continue;
+      StrikeLink link;
+      link.driver = driver;
+      link.target = target;
+      link.strength = std::clamp(driver->m_pro->pivotStrikeStrength, 1.f, 300.f);
+      link.contact = driver->m_pro->pivotStrikeContact;
+      link.direction = driver->m_pro->pivotStrikeDirection < 0 ? -1 : 1;
+      link.upSign = driver->m_pro->pivotUpAngle < driver->m_pro->pivotDownAngle ? -1 : 1;
+      if (link.contact)
+      {
+         link.driverShape = MakeStrikeShape(*driver);
+         link.targetShape = MakeStrikeShape(*target);
+         if (!link.driverShape.Usable() || !link.targetShape.Usable())
+            continue;
+      }
+      for (B2SBulb* pivot : { driver, target })
+         if (std::find(m_physicsPivots.begin(), m_physicsPivots.end(), pivot) == m_physicsPivots.end())
+         {
+            m_physicsPivots.push_back(pivot);
+            pivot->m_pro->rt.physicsPivot = true;
+         }
+      m_strikes.push_back(std::move(link));
+   }
+
    for (Ball& ball : m_balls)
    {
       if (ball.bulb->m_pro->motionPathGravityDrop)
@@ -234,6 +266,234 @@ B2SProPhysics::B2SProPhysics(B2STable& table, B2SProMotionSystem& motion)
       else
          Start(ball);
    }
+   if (!m_strikes.empty())
+      StartClock();
+}
+
+B2SProPhysics::StrikeShape B2SProPhysics::MakeStrikeShape(const B2SBulb& pivot)
+{
+   StrikeShape shape;
+   const ProBulbRuntime& rt = pivot.m_pro->rt;
+   if (rt.collisionContour.empty() || rt.collisionMaskW <= 1 || rt.collisionMaskH <= 1)
+      return shape;
+   shape.contour = rt.collisionContour;
+   shape.maskW = rt.collisionMaskW;
+   shape.maskH = rt.collisionMaskH;
+   const float pivotX = pivot.m_pro->pivotX, pivotY = pivot.m_pro->pivotY;
+   shape.hingeX = pivotX * (shape.maskW - 1);
+   shape.hingeY = pivotY * (shape.maskH - 1);
+   shape.originX = std::clamp(pivotX, 0.f, 1.f) * (shape.maskW - 1);
+   shape.originY = std::clamp(pivotY, 0.f, 1.f) * (shape.maskH - 1);
+   const size_t count = shape.contour.size();
+   shape.radii.resize(count);
+   shape.sampleLengths.resize(count);
+   for (size_t i = 0; i < count; i++)
+   {
+      const ProPoint& p = shape.contour[i];
+      shape.radii[i] = std::sqrt((p.x - shape.originX) * (p.x - shape.originX) + (p.y - shape.originY) * (p.y - shape.originY));
+      shape.maxHingeRadius = std::max(shape.maxHingeRadius, std::sqrt((p.x - shape.hingeX) * (p.x - shape.hingeX) + (p.y - shape.hingeY) * (p.y - shape.hingeY)));
+      const ProPoint& prev = shape.contour[(i + count - 1) % count];
+      const ProPoint& next = shape.contour[(i + 1) % count];
+      shape.sampleLengths[i] = (std::sqrt((p.x - prev.x) * (p.x - prev.x) + (p.y - prev.y) * (p.y - prev.y))
+         + std::sqrt((next.x - p.x) * (next.x - p.x) + (next.y - p.y) * (next.y - p.y))) / 2.f;
+   }
+   return shape;
+}
+
+namespace {
+struct StrikePose
+{
+   float hingeX, hingeY, cosine, sine, scaleX, scaleY;
+};
+}
+
+static constexpr float kPivotStrikeRestitution = 0.55f;
+
+template <typename Shape> static StrikePose StrikePoseOf(const Shape& shape, const ProRect& bounds, float angle)
+{
+   StrikePose pose;
+   pose.scaleX = bounds.w / (shape.maskW - 1);
+   pose.scaleY = bounds.h / (shape.maskH - 1);
+   pose.hingeX = bounds.x + shape.hingeX * pose.scaleX;
+   pose.hingeY = bounds.y + shape.hingeY * pose.scaleY;
+   const double radians = angle * kPi / 180.0;
+   pose.cosine = static_cast<float>(std::cos(radians));
+   pose.sine = static_cast<float>(std::sin(radians));
+   return pose;
+}
+
+template <typename Shape> static ProPoint StrikeWorldPoint(const Shape& shape, const StrikePose& pose, const ProPoint& maskPoint)
+{
+   const float dx = (maskPoint.x - shape.hingeX) * pose.scaleX, dy = (maskPoint.y - shape.hingeY) * pose.scaleY;
+   return { pose.hingeX + dx * pose.cosine - dy * pose.sine, pose.hingeY + dx * pose.sine + dy * pose.cosine };
+}
+
+template <typename Shape> static bool StrikeInside(const Shape& shape, const StrikePose& pose, const ProPoint& point, float& depth, ProPoint& outward)
+{
+   const float dx = point.x - pose.hingeX, dy = point.y - pose.hingeY;
+   const float localX = dx * pose.cosine + dy * pose.sine;
+   const float localY = -dx * pose.sine + dy * pose.cosine;
+   const float maskX = shape.hingeX + localX / pose.scaleX - shape.originX;
+   const float maskY = shape.hingeY + localY / pose.scaleY - shape.originY;
+   const int binCount = static_cast<int>(shape.contour.size());
+   double polar = std::atan2(static_cast<double>(maskY), static_cast<double>(maskX));
+   if (polar < 0.0)
+      polar += kPi * 2.0;
+   const int bin = static_cast<int>(std::floor(polar * binCount / (kPi * 2.0))) % binCount;
+   const float limit = shape.radii[bin];
+   if (limit <= 0.f)
+      return false;
+   const float radius = std::sqrt(maskX * maskX + maskY * maskY);
+   if (radius >= limit)
+      return false;
+   depth = (limit - radius) * (pose.scaleX + pose.scaleY) / 2.f;
+   const ProPoint& prev = shape.contour[(bin - 1 + binCount) % binCount];
+   const ProPoint& next = shape.contour[(bin + 1) % binCount];
+   const float tangentX = (next.x - prev.x) * pose.scaleX, tangentY = (next.y - prev.y) * pose.scaleY;
+   float normalX = tangentY, normalY = -tangentX;
+   const float radialX = (shape.contour[bin].x - shape.originX) * pose.scaleX;
+   const float radialY = (shape.contour[bin].y - shape.originY) * pose.scaleY;
+   if (normalX * radialX + normalY * radialY < 0.f)
+   {
+      normalX = -normalX;
+      normalY = -normalY;
+   }
+   float length = std::sqrt(normalX * normalX + normalY * normalY);
+   if (length < 0.000001f)
+   {
+      length = std::sqrt(radialX * radialX + radialY * radialY);
+      if (length < 0.000001f)
+         return false;
+      normalX = radialX;
+      normalY = radialY;
+   }
+   normalX /= length;
+   normalY /= length;
+   outward = { normalX * pose.cosine - normalY * pose.sine, normalX * pose.sine + normalY * pose.cosine };
+   return depth > 0.f;
+}
+
+float B2SProPhysics::PivotStrikeAngularDelta(const StrikeShape& driver, const ProRect& driverBounds, float driverAngle, float driverAngularVelocity,
+   const StrikeShape& target, const ProRect& targetBounds, float targetAngle, float targetAngularVelocity, float strengthPercent)
+{
+   if (!driver.Usable() || !target.Usable())
+      return 0.f;
+   if (driverBounds.w <= 0.f || driverBounds.h <= 0.f || targetBounds.w <= 0.f || targetBounds.h <= 0.f)
+      return 0.f;
+   // With neither pivot moving there is no closing speed and so no push
+   if (std::abs(driverAngularVelocity) < 0.001f && std::abs(targetAngularVelocity) < 0.001f)
+      return 0.f;
+   const StrikePose driverPose = StrikePoseOf(driver, driverBounds, driverAngle);
+   const StrikePose targetPose = StrikePoseOf(target, targetBounds, targetAngle);
+   // Two rotating shapes can only touch when their hinge circles overlap
+   const float driverReach = driver.maxHingeRadius * std::max(driverPose.scaleX, driverPose.scaleY);
+   const float targetReach = target.maxHingeRadius * std::max(targetPose.scaleX, targetPose.scaleY);
+   const float hingeDx = driverPose.hingeX - targetPose.hingeX, hingeDy = driverPose.hingeY - targetPose.hingeY;
+   if (hingeDx * hingeDx + hingeDy * hingeDy > (driverReach + targetReach) * (driverReach + targetReach))
+      return 0.f;
+
+   // Depth and outline-length weighted average of every overlapping outline sample
+   float totalWeight = 0.f, contactX = 0.f, contactY = 0.f, normalX = 0.f, normalY = 0.f;
+   float depth = 0.f;
+   ProPoint surfaceNormal;
+   const float driverLengthScale = (driverPose.scaleX + driverPose.scaleY) / 2.f;
+   const float targetLengthScale = (targetPose.scaleX + targetPose.scaleY) / 2.f;
+   for (size_t i = 0; i < driver.contour.size(); i++)
+   {
+      const ProPoint point = StrikeWorldPoint(driver, driverPose, driver.contour[i]);
+      if (StrikeInside(target, targetPose, point, depth, surfaceNormal))
+      {
+         const float weight = depth * driver.sampleLengths[i] * driverLengthScale;
+         totalWeight += weight;
+         contactX += point.x * weight;
+         contactY += point.y * weight;
+         normalX += surfaceNormal.x * weight;
+         normalY += surfaceNormal.y * weight;
+      }
+   }
+   for (size_t i = 0; i < target.contour.size(); i++)
+   {
+      const ProPoint point = StrikeWorldPoint(target, targetPose, target.contour[i]);
+      if (StrikeInside(driver, driverPose, point, depth, surfaceNormal))
+      {
+         const float weight = depth * target.sampleLengths[i] * targetLengthScale;
+         totalWeight += weight;
+         contactX += point.x * weight;
+         contactY += point.y * weight;
+         normalX -= surfaceNormal.x * weight;
+         normalY -= surfaceNormal.y * weight;
+      }
+   }
+   if (totalWeight <= 0.f)
+      return 0.f;
+   const float normalLength = std::sqrt(normalX * normalX + normalY * normalY);
+   if (normalLength < 0.000001f)
+      return 0.f;
+   const float cx = contactX / totalWeight, cy = contactY / totalWeight;
+   const float nx = normalX / normalLength, ny = normalY / normalLength;
+
+   const float driverOmega = driverAngularVelocity * static_cast<float>(kPi / 180.0);
+   const float targetOmega = targetAngularVelocity * static_cast<float>(kPi / 180.0);
+   const float driverArmX = cx - driverPose.hingeX, driverArmY = cy - driverPose.hingeY;
+   const float targetArmX = cx - targetPose.hingeX, targetArmY = cy - targetPose.hingeY;
+   const float relativeX = (-targetOmega * targetArmY) - (-driverOmega * driverArmY);
+   const float relativeY = (targetOmega * targetArmX) - (driverOmega * driverArmX);
+   const float closing = relativeX * nx + relativeY * ny;
+   if (closing <= 0.f)
+      return 0.f;
+   const float lever = targetArmX * ny - targetArmY * nx;
+   const float armLengthSquared = targetArmX * targetArmX + targetArmY * targetArmY;
+   const float softening = 0.01f * armLengthSquared + 0.000001f;
+   const float deltaOmega = -(1.f + kPivotStrikeRestitution) * closing * lever / (lever * lever + softening);
+   const float strength = std::clamp(strengthPercent, 0.f, 300.f) / 100.f;
+   const float result = deltaOmega * static_cast<float>(180.0 / kPi) * strength;
+   if (std::isnan(result) || std::isinf(result))
+      return 0.f;
+   return result;
+}
+
+// B2SData.PivotStrikeLink.Resolve
+void B2SProPhysics::ResolveStrike(StrikeLink& link, double elapsed)
+{
+   if (elapsed <= 0.0)
+      return;
+   const ProBulbRuntime& driverRt = link.driver->m_pro->rt;
+   float driverDelta = std::fmod(driverRt.angle - driverRt.physicsPreviousAngle, 360.f);
+   if (driverDelta > 180.f)
+      driverDelta -= 360.f;
+   if (driverDelta < -180.f)
+      driverDelta += 360.f;
+   if (!link.contact)
+   {
+      // PivotKickState.Advance: fire once per up-swing at its fastest point
+      const float speed = static_cast<float>(driverDelta * link.upSign / elapsed);
+      float kickSpeed = 0.f;
+      if (speed > 0.001f)
+      {
+         if (!link.kickFired && link.kickLastSpeed > 0.f && speed < link.kickLastSpeed)
+         {
+            kickSpeed = link.kickLastSpeed;
+            link.kickFired = true;
+         }
+         link.kickLastSpeed = speed;
+      }
+      else
+      {
+         if (!link.kickFired && link.kickLastSpeed > 0.f)
+            kickSpeed = link.kickLastSpeed;
+         link.kickFired = false;
+         link.kickLastSpeed = 0.f;
+      }
+      // PivotKickAngularDelta (PivotKickSpinPerKickSpeed = 4)
+      if (kickSpeed > 0.f)
+         ApplyPivotPhysicsAngularImpulse(*link.target, (link.direction < 0 ? -1.f : 1.f) * kickSpeed * 4.f * std::clamp(link.strength, 0.f, 300.f) / 100.f);
+      return;
+   }
+   const ProBulbRuntime& targetRt = link.target->m_pro->rt;
+   const float delta = PivotStrikeAngularDelta(link.driverShape, CurrentRect(*link.driver), driverRt.angle, static_cast<float>(driverDelta / elapsed),
+      link.targetShape, CurrentRect(*link.target), targetRt.angle, targetRt.physicsAngularVelocity, link.strength);
+   if (delta != 0.f)
+      ApplyPivotPhysicsAngularImpulse(*link.target, delta);
 }
 
 B2SBulb* B2SProPhysics::FindPivot(const string& lowerName) const
@@ -393,6 +653,8 @@ void B2SProPhysics::Advance(B2SServer* server)
    {
       for (B2SBulb* pivot : m_physicsPivots)
          AdvancePhysicsPivot(*pivot, 0.001);
+      for (StrikeLink& link : m_strikes)
+         ResolveStrike(link, 0.001);
       for (Ball& ball : m_balls)
          AdvanceServerStep(ball);
    }
@@ -1458,6 +1720,38 @@ void B2SProPhysics::AdvancePhysicsPivot(B2SBulb& pivot, double elapsed)
          if (rt.automaticOscillation && rt.automaticActive)
             SetPivotRotationTarget(rt, std::abs(rt.targetAngle - rt.upAngle) < 0.01f ? rt.downAngle : rt.upAngle, rt.moveDuration);
       }
+      return;
+   }
+   if (pp.pivotPhysicsEnabled && pp.pivotWeight)
+   {
+      // AdvanceWeightedPivot: gravity on the counterweight, friction, rotation
+      if (elapsed <= 0.0)
+         return;
+      const float armX = (pp.pivotWeightX - pp.pivotX) * static_cast<float>(pivot.m_width);
+      const float armY = (pp.pivotWeightY - pp.pivotY) * static_cast<float>(pivot.m_height);
+      const float armLength = std::sqrt(armX * armX + armY * armY);
+      float acceleration = 0.f;
+      if (armLength >= 0.0001f)
+      {
+         const double radians = rt.angle * kPi / 180.0;
+         const float worldX = static_cast<float>(armX * std::cos(radians) - armY * std::sin(radians));
+         acceleration = worldX / armLength * std::clamp(pp.pivotWeightStrength, 0.f, 100.f) * 36.f; // PivotWeightAccelerationPerStrength
+      }
+      if (std::abs(rt.physicsAngularVelocity) < 0.0001f && std::abs(acceleration) < 0.5f)
+      {
+         rt.physicsAngularVelocity = 0.f;
+         return;
+      }
+      float velocity = static_cast<float>(rt.physicsAngularVelocity + acceleration * elapsed);
+      velocity = static_cast<float>(velocity * std::exp(-std::max(0.f, pp.pivotPhysicsFriction) * elapsed));
+      velocity = std::clamp(velocity, -2160.f, 2160.f);
+      rt.angle = static_cast<float>(std::fmod(rt.angle + velocity * elapsed, 360.0));
+      if (std::abs(velocity) < 0.01f && std::abs(acceleration) < 0.5f)
+         velocity = 0.f;
+      rt.physicsAngularVelocity = velocity;
+      rt.pivotRotation = true;
+      rt.nativeRotation = true;
+      rt.driven = true;
       return;
    }
    if (!pp.pivotPhysicsEnabled || elapsed <= 0.0 || std::abs(rt.physicsAngularVelocity) < 0.0001f)

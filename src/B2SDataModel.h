@@ -86,6 +86,10 @@ public:
    void SetTarget(int value, bool animate);
    // Advances the rolling animation; returns true each time a reel step completes (=> play the reel sound)
    bool Update(float elapsedInS, int rollingIntervalMs, int intermediates, bool rollUp);
+   // B2S Pro Realistic reel style: the drum turns smoothly, one step taking stepMs (no intermediate
+   // images); returns true each time a step completes
+   bool UpdateSmooth(float elapsedInS, double stepMs, bool rollUp);
+   double Roll() const { return m_roll; } // -1..1, how far the drum has turned toward the next (+) / previous (-) number
    int Current() const { return m_current; }
    int Intermediate() const { return m_intermediate; } // 0 = digit image, n > 0 = intermediate image n
    bool IsRolling() const { return m_rolling; }
@@ -101,6 +105,8 @@ private:
    int m_intermediate = 0;
    int m_settle = 0; // Settle ticks between two digit steps
    float m_accMs = 0.f;
+   double m_smoothMs = 0.0;
+   double m_roll = 0.0;
    bool m_rolling = false;
    bool m_illuminated = false;
 };
@@ -163,6 +169,11 @@ public:
    const int m_reel3DTemperature;
    const int m_reel3DDepth;
    const int m_reel3DGlass;
+   const int m_reel3DStyle; // 0 Classic, 1 Realistic (ReelRealistic)
+   const int m_reel3DCurve;
+   const int m_reel3DShadow;
+   const int m_reel3DGlassStyle; // 0 the original reflection lines, 1 soft wide, 2 soft streaks (ReelGlass)
+   const int m_reel3DDividerWidth; // B2S Pro reel dividers: line width in design pixels, 0 = off (Reel3DDividers)
    float m_rotationAngle = 0.f;
    float m_perspectiveDepth = 0.f;
    float m_perspectiveLeftScale = 1.f;
