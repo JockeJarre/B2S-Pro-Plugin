@@ -28,7 +28,7 @@ on:
       - CMakeLists.txt
       - .github/workflows/b2s-plugin.yml
   push:
-    branches: [main, ci]
+    branches: [main, ci, b2spro-save]
     paths:
       - src/**
       - fetch-upstream.py
