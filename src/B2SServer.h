@@ -195,6 +195,11 @@ public:
    static void StartFileWriter(const MsgPluginAPI* msgApi, unsigned int endpointId, const VPXPluginAPI* vpxApi);
    static void StopFileWriter();
 
+   // B2S Pro: DMD position file of a .B2SPro (<name>.B2SPro.displays.xml), holding the <Displays> element edited
+   // in the plugin, so that the .B2SPro file itself is never written
+   static std::filesystem::path DisplaysSidecarPath(const std::filesystem::path& b2sProPath);
+   static bool IsDisplaysSidecar(const std::filesystem::path& path);
+
    void ForwardCall(void* me, int memberIndex, ScriptVariant* pArgs, ScriptVariant* pRet) override;
 
 private:

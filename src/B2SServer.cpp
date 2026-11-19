@@ -148,9 +148,12 @@ namespace
    {
       const string failed = "Failed to save the DMD displays to " + PluginStrings::PathToUTF8(path);
       std::ifstream in(path, std::ios::binary);
-      if (!in)
+      // B2S Pro: the DMD position file of a .B2SPro is created by its first save
+      std::error_code existsError;
+      const bool newSidecar = !in && B2SServer::IsDisplaysSidecar(path) && !std::filesystem::exists(path, existsError);
+      if (!in && !newSidecar)
          return failed + " (can't read it)";
-      const std::string buffer((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      const std::string buffer = newSidecar ? std::string("<DirectB2SData />") : std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
       in.close();
       tinyxml2::XMLDocument xmlDoc;
       if (xmlDoc.Parse(buffer.c_str(), buffer.size()) != tinyxml2::XML_SUCCESS)
@@ -277,6 +280,23 @@ namespace
       fileWriter.cv.notify_one();
       return 0;
    }
+}
+
+static constexpr const char* displaysSidecarSuffix = ".displays.xml";
+
+std::filesystem::path B2SServer::DisplaysSidecarPath(const std::filesystem::path& b2sProPath)
+{
+   std::filesystem::path sidecar = b2sProPath;
+   sidecar += displaysSidecarSuffix;
+   return sidecar;
+}
+
+bool B2SServer::IsDisplaysSidecar(const std::filesystem::path& path)
+{
+   string name = PluginStrings::PathToUTF8(path.filename());
+   std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+   const string suffix = string(".b2spro") + displaysSidecarSuffix;
+   return name.size() > suffix.size() && name.ends_with(suffix);
 }
 
 void B2SServer::StartFileWriter(const MsgPluginAPI* msgApi, unsigned int endpointId, const VPXPluginAPI* vpxApi)
@@ -442,11 +462,36 @@ std::shared_ptr<B2STable> B2SServer::LoadB2SFile(const std::filesystem::path& pa
       else
          LOGE("Invalid B2S file: " + PluginStrings::PathToUTF8(path));
 
-      // B2S Pro: a .B2SPro file without DMD positions (<Displays>) uses the ones saved by the VPX B2S plugin in the
-      // .directb2s of the same name in the same folder. That file is only read, never written.
       string extension = PluginStrings::PathToUTF8(path.extension());
       std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-      if (b2s && b2s->m_dmdDisplays.empty() && extension == ".b2spro")
+      // B2S Pro: DMD positions edited in the plugin for a .B2SPro are saved in its DMD position file
+      // (<name>.B2SPro.displays.xml), never in the .B2SPro itself. When that file exists it is used as is,
+      // also when it holds no DMD (they were removed in the plugin).
+      bool sidecarLoaded = false;
+      if (b2s && extension == ".b2spro")
+      {
+         const std::filesystem::path sidecarPath = find_case_insensitive_file_path(DisplaysSidecarPath(path));
+         if (std::ifstream sidecarFile(sidecarPath, std::ios::binary); !sidecarPath.empty() && sidecarFile)
+         {
+            const std::string sidecarBuffer((std::istreambuf_iterator<char>(sidecarFile)), std::istreambuf_iterator<char>());
+            tinyxml2::XMLDocument sidecarTree;
+            const tinyxml2::XMLElement* sidecarRoot = nullptr;
+            if (sidecarTree.Parse(sidecarBuffer.c_str(), sidecarBuffer.size()) == tinyxml2::XML_SUCCESS)
+               sidecarRoot = sidecarTree.FirstChildElement("DirectB2SData");
+            if (sidecarRoot)
+            {
+               b2s->m_dmdDisplays = B2STable::ReadDMDDisplays(*sidecarRoot);
+               sidecarLoaded = true;
+               LOGI("B2S Pro: using the " + std::to_string(b2s->m_dmdDisplays.size()) + " DMD position(s) saved in " + PluginStrings::PathToUTF8(sidecarPath));
+            }
+            else
+               LOGE("B2S Pro: ignoring the DMD position file that can't be read: " + PluginStrings::PathToUTF8(sidecarPath));
+         }
+      }
+
+      // B2S Pro: a .B2SPro file without DMD positions (<Displays>) uses the ones saved by the VPX B2S plugin in the
+      // .directb2s of the same name in the same folder. That file is only read, never written.
+      if (b2s && !sidecarLoaded && b2s->m_dmdDisplays.empty() && extension == ".b2spro")
       {
          const std::filesystem::path legacyPath = find_case_insensitive_file_path(path.parent_path() / (PluginStrings::PathToUTF8(path.stem()) + ".directb2s"));
          if (std::ifstream legacyFile(legacyPath, std::ios::binary); !legacyPath.empty() && legacyFile)
@@ -538,17 +583,17 @@ void B2SServer::RegisterOverlaySheet()
    settingsSheet.GetItems = &SettingsGetItems;
    m_pagedUIApi->RegisterSheet(m_endpointId, &settingsSheet);
 
-   // B2S Pro: the edit sheet saves DMD overlay changes back into the loaded file. Never write
-   // into a .B2SPro file; only a legacy .directb2s offers it.
+   // B2S Pro: the edit sheet saves DMD overlay changes back into a legacy .directb2s. A .B2SPro file is
+   // never written: its DMD positions are saved in its DMD position file (<name>.B2SPro.displays.xml).
    string extension = PluginStrings::PathToUTF8(m_b2sPath.extension());
    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-   if (extension != ".directb2s")
+   if (extension != ".directb2s" && extension != ".b2spro")
    {
       m_overlaySheetRegistered = true;
       return;
    }
 
-   m_overlayDoc.path = m_b2sPath;
+   m_overlayDoc.path = extension == ".b2spro" ? DisplaysSidecarPath(m_b2sPath) : m_b2sPath;
    m_overlayDoc.requestRefresh = [this]() { m_pagedUIApi->RequestSheetRefresh(m_endpointId, "backglass"); };
    const string name = "Edit \""s + PluginStrings::PathToUTF8(m_b2sPath.filename()) + "\"";
    PagedUISheetDef sheet {};

@@ -4,11 +4,11 @@ A Visual Pinball X plugin that shows B2S Pro backglasses (`.B2SPro`) made with t
 [B2S Pro Designer](https://github.com/KWildman69/B2S-Pro), plus legacy `.directb2s` backglasses.
 It is built on the B2S plugin that ships with VPX.
 
-Version 1.2.0, for VPinballX_BGFX 10.8.1 (64-bit Windows). Please report problems on the [Issues](https://github.com/KWildman69/B2S-Pro-Plugin/issues) page.
+Version 1.3.0, for VPinballX_BGFX 10.8.1 (64-bit Windows). Please report problems on the [Issues](https://github.com/KWildman69/B2S-Pro-Plugin/issues) page.
 
 ## Install
 
-1. Download `B2S-Pro-Plugin-1.2.0.zip` from the [Releases](https://github.com/KWildman69/B2S-Pro-Plugin/releases) page.
+1. Download `B2S-Pro-Plugin-1.3.0.zip` from the [Releases](https://github.com/KWildman69/B2S-Pro-Plugin/releases) page.
    To check the download, compare its SHA-256 with the `.sha256` file.
 2. Close VPX.
 3. Unzip it and copy the `b2spro` folder into VPX's `plugins` folder, so you have
@@ -23,6 +23,20 @@ For each table, the plugin looks for a `.B2SPro` file before a `.directb2s` file
 table's file name, then by the folder name. B2S Pro behaviour is used only for files made with the
 B2S Pro layer system; legacy backglasses run on the original B2S plugin code.
 The plugin never writes into `.B2SPro` files.
+
+## DMD positions
+
+DMD positions are placed on the backglass edit page in VPX's in-game menu (B2S Pro, Modify Backglass).
+For a legacy `.directb2s`, they are saved into that file, as with the B2S plugin that ships with VPX.
+For a `.B2SPro`, they are saved in a separate file next to it, `<name>.B2SPro.displays.xml`.
+A `.B2SPro` takes its DMD positions from the first of these that exists:
+
+1. its `.B2SPro.displays.xml` file;
+2. positions stored in the `.B2SPro` itself;
+3. the `.directb2s` with the same name in the same folder (read only).
+
+To return to the positions from 2 or 3, delete the `.B2SPro.displays.xml` file.
+A DMD placed on the grill shows only when **Show Grill** is on.
 
 ## Settings
 
