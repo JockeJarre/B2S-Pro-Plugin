@@ -4,11 +4,11 @@ A Visual Pinball X plugin that shows B2S Pro backglasses (`.B2SPro`) made with t
 [B2S Pro Designer](https://github.com/KWildman69/B2S-Pro), plus legacy `.directb2s` backglasses.
 It is built on the B2S plugin that ships with VPX.
 
-Version 1.3.0, for VPinballX_BGFX 10.8.1 (64-bit Windows). Please report problems on the [Issues](https://github.com/KWildman69/B2S-Pro-Plugin/issues) page.
+Version 1.4.0, for VPinballX_BGFX 10.8.1 (64-bit Windows). Please report problems on the [Issues](https://github.com/KWildman69/B2S-Pro-Plugin/issues) page.
 
 ## Install
 
-1. Download `B2S-Pro-Plugin-1.3.0.zip` from the [Releases](https://github.com/KWildman69/B2S-Pro-Plugin/releases) page.
+1. Download `B2S-Pro-Plugin-1.4.0.zip` from the [Releases](https://github.com/KWildman69/B2S-Pro-Plugin/releases) page.
    To check the download, compare its SHA-256 with the `.sha256` file.
 2. Close VPX.
 3. Unzip it and copy the `b2spro` folder into VPX's `plugins` folder, so you have
@@ -44,6 +44,11 @@ Shown in VPX's plugin settings for B2S Pro:
 
 - **Show Grill**: show the grill area (off by default).
 - **Dual Mode**: Authentic or Fantasy mode for dual backglasses.
+- **Keep aspect ratio**: 0 to 100 %, off (0) by default. At 100 the backglass and score view keep their
+  authored shape in their window and the leftover area stays black; 0 stretches them over the whole window
+  as before, and values in between give part of the black area.
+- **Center vertically**: with Keep aspect ratio on, center the image in the black area instead of putting
+  it at the bottom (off by default).
 - **Upgraded segment rendering**: off by default, which draws LED and VFD score displays the way the
   B2S Server does. Turn it on to use VPX's upgraded segment renderer instead.
 - **Used LED type**: force the LED display type (Auto uses the type declared by the backglass).
