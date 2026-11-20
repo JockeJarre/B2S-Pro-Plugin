@@ -1533,14 +1533,14 @@ void B2SRenderer::DrawProReelGaps(VPXRenderContext2D* ctx, const B2SScore& reel,
       if (cache.tex == nullptr)
          continue;
       if (reel.m_hasTransform)
-         ctx->DrawImage(ctx, cache.tex, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, cache.w, cache.h, 0.f, 0.f, 0.f, cache.x, cache.y, cache.w, cache.h);
+         ctx->DrawImage(ctx, cache.tex, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, cache.w, cache.h, 0.f, 0.f, 0.f, ContentX(cache.x), ContentY(cache.y), cache.w, cache.h);
       else
       {
          // Same placement as the digits: digit i ends at x + width, digit i + 1 starts at the next x
          const float gapX0 = static_cast<float>(reel.m_locX) + static_cast<float>(i) * (width + 0.5f * static_cast<float>(reel.m_spacing)) + width;
          const float gapX1 = static_cast<float>(reel.m_locX) + static_cast<float>(i + 1) * (width + 0.5f * static_cast<float>(reel.m_spacing));
          if (gapX1 > gapX0)
-            ctx->DrawImage(ctx, cache.tex, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, cache.w, cache.h, 0.f, 0.f, 0.f, gapX0, static_cast<float>(reel.m_locY), gapX1 - gapX0, static_cast<float>(reel.m_height));
+            ctx->DrawImage(ctx, cache.tex, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, cache.w, cache.h, 0.f, 0.f, 0.f, ContentX(gapX0), ContentY(static_cast<float>(reel.m_locY)), gapX1 - gapX0, static_cast<float>(reel.m_height));
       }
    }
 }
