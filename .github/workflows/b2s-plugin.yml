@@ -53,11 +53,9 @@ jobs:
           - name: linux-x64
             os: ubuntu-latest
             lib: plugin-b2spro.so
-          # TODO reactivate: the macOS builds sit long in the runner queue and get cancelled by the
-          # concurrency group before finishing, which reddens every run on main
-          # - name: macos-arm64
-          #   os: macos-latest
-          #   lib: plugin-b2spro.dylib
+          - name: macos-arm64
+            os: macos-latest
+            lib: plugin-b2spro.dylib
     name: B2S Pro plugin ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     env:
