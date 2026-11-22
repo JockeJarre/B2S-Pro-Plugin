@@ -12,6 +12,7 @@
 #include <iterator>
 #include <mutex>
 #include <random>
+#include <regex>
 #include <thread>
 
 #include <cstddef> // for size_t, ptrdiff_t
@@ -42,14 +43,15 @@ MSGPI_STRING_VAL_SETTING(animationSlowDownsProp, "AnimationSlowDowns", "Per-anim
 // B2S Pro: loose backglass file matching. The B2S Pro Server convention names the pair
 // 'FlipperName (Company Year)', so a table carrying extra text (version, mod, ...) has no backglass
 // named after it. With the strict match turned off, a table without a full name match is matched
-// through its first closing parenthesis: 'Big Guns (Williams 1987) Something Else.vpx' takes
+// through its last '(Company Year)' block: 'Big Guns (Williams 1987) Something Else.vpx' takes
 // 'Big Guns (Williams 1987).B2SPro'. A full name match stays the first resort whatever is set, and
 // the loose match doubles as the random backglass: when several files fit, one of them is taken at
 // random at every table load (both .B2SPro and .directb2s take part in the draw)
 MSGPI_BOOL_VAL_SETTING(strictFileNameProp, "StrictFileNameMatch", "Strict file name match",
    "Load only a backglass named exactly after the table (or after its folder). Turn off to also accept "
-   "a backglass named up to the table name's closing parenthesis: 'Big Guns (Williams 1987) Mod.vpx' "
-   "takes 'Big Guns (Williams 1987).B2SPro'. When off, several backglass files that fit are picked at "
+   "a backglass named up to the table name's last '(Company Year)' block: 'Big Guns (special edition) "
+   "(Williams 1987) Mod.vpx' takes 'Big Guns (special edition) (Williams 1987).B2SPro'. When off, several "
+   "backglass files that fit are picked at "
    "random at every table load (both .B2SPro and .directb2s take part in the draw). An exact table name "
    "match always beats the names that fit loosely, so an exact match leaves nothing to pick from", true, true);
 
@@ -129,7 +131,7 @@ namespace
       strictName.type = PAGEDUI_ITEM_BOOL;
       strictName.id = "StrictFileNameMatch";
       strictName.label = "Strict file name match";
-      strictName.tooltip = "Load only a backglass named exactly after the table (or after its folder). Turn off to also accept a backglass named up to the table name's closing parenthesis: 'Big Guns (Williams 1987) Mod.vpx' takes 'Big Guns (Williams 1987).B2SPro'. When off, several backglass files that fit are picked at random at every table load (both .B2SPro and .directb2s take part in the draw). An exact table name match always beats the names that fit loosely, so an exact match leaves nothing to pick from";
+      strictName.tooltip = "Load only a backglass named exactly after the table (or after its folder). Turn off to also accept a backglass named up to the table name's last '(Company Year)' block: 'Big Guns (special edition) (Williams 1987) Mod.vpx' takes 'Big Guns (special edition) (Williams 1987).B2SPro'. When off, several backglass files that fit are picked at random at every table load (both .B2SPro and .directb2s take part in the draw). An exact table name match always beats the names that fit loosely, so an exact match leaves nothing to pick from";
       strictName.storage = PAGEDUI_STORAGE_HOST;
       strictName.boolProp = { 1, &StrictNameGet, &StrictNameSet };
       FillHeader(items[pos++], "Modify Backglass");
@@ -546,10 +548,11 @@ std::shared_ptr<B2STable> B2SServer::LoadB2SFile(const std::filesystem::path& pa
 // .B2SPro file exists (same order as the B2S Pro Server, formBackglass FindBackglassFile).
 //
 // Loose matching ('Strict file name match' off): a table without an exact match is matched through
-// its first closing parenthesis, 'Big Guns (Williams 1987) Something Else.vpx' takes
-// 'Big Guns (Williams 1987).B2SPro' (the B2S Pro Server naming convention is 'FlipperName (Company
-// Year)', so tables carrying extra text find their pair). An exact match always wins, and a name
-// without parenthesis has the whole name as prefix, so it is only ever matched exactly.
+// through its last '(Company Year)' block: 'Big Guns (special edition) (Williams 1987) Mod.vpx' takes
+// 'Big Guns (special edition) (Williams 1987).B2SPro' (the B2S Pro Server naming convention is
+// 'FlipperName (Company Year)', so tables carrying extra text find their pair, wherever the year
+// block sits). An exact match always wins, and a name without a '(Company Year)' block has the whole
+// name as prefix, so it is only ever matched exactly.
 //
 // The loose match doubles as the random backglass: every file that fits (the .B2SPro and the legacy
 // .directb2s alike) goes into one pool and the pick is taken at random at every table load. An exact
@@ -557,11 +560,22 @@ std::shared_ptr<B2STable> B2SServer::LoadB2SFile(const std::filesystem::path& pa
 // exact names, the table and folder names and both extensions take part in it too).
 namespace
 {
-   // The loose matching prefix: the name up to its first closing parenthesis
+   // The loose matching prefix: the name up to the end of its last '(Company Year)' block, a word
+   // led text ending in a 4 digit year (the pinball era: 19xx and 20xx). 'Big Guns (special edition)
+   // (Williams 1987) Mod' takes 'Big Guns (special edition) (Williams 1987)'. A name without such a
+   // block has the whole name as prefix, so it is only ever matched exactly
    string B2SFileNamePrefix(const string& name)
    {
-      const size_t pos = name.find(')');
-      return pos == string::npos ? name : name.substr(0, pos + 1);
+      // '(...text... 1987)': opens with a letter, carries no nested parenthesis, ends in the year
+      static const std::regex yearBlock { R"(\([A-Za-z][^()]*\b(19|20)[0-9]{2}\))" };
+      std::smatch last;
+      bool found = false;
+      for (auto it = std::sregex_iterator(name.begin(), name.end(), yearBlock); it != std::sregex_iterator(); ++it)
+      {
+         last = *it;
+         found = true;
+      }
+      return found ? name.substr(0, last.position() + last.length()) : name;
    }
 
    // Every file of the folder whose stem starts with the prefix (case insensitive) carrying the given
@@ -625,7 +639,7 @@ std::filesystem::path B2SServer::FindB2SFile() const
    if (strictFileNameProp_Get())
       return {};
 
-   // Loose matching: every file that fits the first closing parenthesis of the table name (or of the
+   // Loose matching: every file that fits the '(Company Year)' prefix of the table name (or of the
    // folder name), .B2SPro and .directb2s alike, goes into the pool and the draw takes one of them
    vector<std::filesystem::path> pool;
    for (const string& name : { m_tableName, folderName })
