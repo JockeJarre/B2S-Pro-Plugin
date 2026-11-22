@@ -48,12 +48,9 @@ MSGPI_STRING_VAL_SETTING(animationSlowDownsProp, "AnimationSlowDowns", "Per-anim
 // the loose match doubles as the random backglass: when several files fit, one of them is taken at
 // random at every table load (both .B2SPro and .directb2s take part in the draw)
 MSGPI_BOOL_VAL_SETTING(strictFileNameProp, "StrictFileNameMatch", "Strict file name match",
-   "Load only a backglass named exactly after the table (or after its folder). Turn off to also accept "
-   "a backglass named up to the table name's last '(Company Year)' block: 'Big Guns (special edition) "
-   "(Williams 1987) Mod.vpx' takes 'Big Guns (special edition) (Williams 1987).B2SPro'. When off, several "
-   "backglass files that fit are picked at "
-   "random at every table load (both .B2SPro and .directb2s take part in the draw). An exact table name "
-   "match always beats the names that fit loosely, so an exact match leaves nothing to pick from", true, true);
+   "Load only a backglass named exactly after the table. Turn off to also accept a backglass whose "
+   "name matches the table up to its last '(Company Year)' block. Several fitting files are then "
+   "picked at random at every table load (.B2SPro and .directb2s alike). An exact match always wins", true, true);
 
 void B2SServer::RegisterSettings(const MsgPluginAPI* const msgApi, unsigned int endpointId)
 {
@@ -131,7 +128,7 @@ namespace
       strictName.type = PAGEDUI_ITEM_BOOL;
       strictName.id = "StrictFileNameMatch";
       strictName.label = "Strict file name match";
-      strictName.tooltip = "Load only a backglass named exactly after the table (or after its folder). Turn off to also accept a backglass named up to the table name's last '(Company Year)' block: 'Big Guns (special edition) (Williams 1987) Mod.vpx' takes 'Big Guns (special edition) (Williams 1987).B2SPro'. When off, several backglass files that fit are picked at random at every table load (both .B2SPro and .directb2s take part in the draw). An exact table name match always beats the names that fit loosely, so an exact match leaves nothing to pick from";
+      strictName.tooltip = "Load only a backglass named exactly after the table. Turn off to also accept a backglass whose name matches the table up to its last '(Company Year)' block. Several fitting files are then picked at random at every table load (.B2SPro and .directb2s alike). An exact match always wins";
       strictName.storage = PAGEDUI_STORAGE_HOST;
       strictName.boolProp = { 1, &StrictNameGet, &StrictNameSet };
       FillHeader(items[pos++], "Modify Backglass");
